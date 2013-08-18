@@ -56,16 +56,20 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax,
       chroma(c)
 {
     if (!vi.IsPlanar()) {
-        env->ThrowError("TCanny2: Planar format only.");
+        env->ThrowError("TCannyMod: Planar format only.");
     }
 
     if (vi.IsY8()) {
         chroma = 0;
     }
 
+    if (vi.width > 65535 || vi.height > 65535) {
+        env->ThrowError("TCannyMod: width/height must be smaller than 65536.");
+    }
+
     set_gb_kernel(sigma, gb_radius, gb_kernel);
     if (gb_radius == 0) {
-        env->ThrowError("TCanny2: sigma is too large.");
+        env->ThrowError("TCannyMod: sigma is too large.");
     }
 
     frame_pitch = ((vi.width + 15) / 16) * 16;
@@ -79,7 +83,7 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax,
     hysteresiss_map = (uint8_t*)malloc(vi.width * vi.height);
 
     if (!blur_frame || !edge_mask || !direction || !buff || !hysteresiss_map) {
-        env->ThrowError("TCanny2: failed to allocate temporal buffer.");
+        env->ThrowError("TCannyMod: failed to allocate temporal buffer.");
     }
 }
 

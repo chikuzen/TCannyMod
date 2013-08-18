@@ -72,6 +72,7 @@ write_edge_direction(int width, int height, uint8_t* dstp, int dst_pitch)
     }
 }
 
+
 void __stdcall TCannyM::
 write_binary_mask(int width, int height, uint8_t* dstp, int dst_pitch)
 {

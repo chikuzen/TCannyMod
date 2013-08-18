@@ -55,9 +55,12 @@ class TCannyM : public GenericVideoFilter {
     void __stdcall edge_detect(int width, int height);
     void __stdcall non_max_suppress(int width, int height);
     void __stdcall hysteresiss(int width, int height);
-    void __stdcall write_dst_frame(const float* srcp, uint8_t* dstp, int width, int height, int dst_pitch);
-    void __stdcall write_edge_direction(int width, int height, uint8_t* dstp, int dst_pitch);
-    void __stdcall write_binary_mask(int width, int height, uint8_t* dstp, int dst_pitch);
+    void __stdcall write_dst_frame(const float* srcp, uint8_t* dstp, int width,
+                                   int height, int dst_pitch);
+    void __stdcall write_edge_direction(int width, int height, uint8_t* dstp,
+                                        int dst_pitch);
+    void __stdcall write_binary_mask(int width, int height, uint8_t* dstp,
+                                     int dst_pitch);
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,

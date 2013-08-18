@@ -34,11 +34,11 @@ static const AVS_Linkage* AVS_linkage = 0;
 static void __stdcall
 set_gb_kernel(float sigma, int& radius, float* kernel)
 {
-    int length = max((int)(sigma * 3.0f + 0.5f), 1) * 2 + 1;
+    radius = max((int)(sigma * 3.0f + 0.5f), 1);
+    int length = radius * 2 + 1;
     if (length > GB_MAX_LENGTH) {
         return;
     }
-    radius = length / 2;
 
     float sum = 0.0f;
     for (int i = -radius; i <= radius; i++) {
@@ -51,12 +51,12 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
 
 
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax,
-                 int c, IScriptEnvironment* env)
+                 int c, const char* name, IScriptEnvironment* env)
     : GenericVideoFilter(ch), mode(m), gb_radius(0), th_min(tmin), th_max(tmax),
-      chroma(c)
+      chroma(c), edge_mask(0), direction(0), hysteresiss_map(0)
 {
     if (!vi.IsPlanar()) {
-        env->ThrowError("TCannyMod: Planar format only.");
+        env->ThrowError("%s: Planar format only.", name);
     }
 
     if (vi.IsY8()) {
@@ -64,26 +64,31 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax,
     }
 
     if (vi.width > 65535 || vi.height > 65535) {
-        env->ThrowError("TCannyMod: width/height must be smaller than 65536.");
+        env->ThrowError("%s: width/height must be smaller than 65536.", name);
     }
 
     set_gb_kernel(sigma, gb_radius, gb_kernel);
     if (gb_radius == 0) {
-        env->ThrowError("TCannyMod: sigma is too large.");
+        env->ThrowError("%s: sigma is too large.", name);
     }
-
-    frame_pitch = ((vi.width + 15) / 16) * 16;
-    blur_frame = (float*)_aligned_malloc(frame_pitch * sizeof(float) * vi.height, 16);
-    edge_mask = (float*)_aligned_malloc(frame_pitch * sizeof(float) * vi.height, 16);
-    direction = (uint8_t*)_aligned_malloc(frame_pitch * vi.height, 16);
 
     buff_pitch = ((vi.width + 16 + 15) / 16) * 16;
     buff = (float*)_aligned_malloc(buff_pitch * sizeof(float) * 3, 16);
 
-    hysteresiss_map = (uint8_t*)malloc(vi.width * vi.height);
+    frame_pitch = ((vi.width + 15) / 16) * 16;
+    blur_frame = (float*)_aligned_malloc(frame_pitch * sizeof(float) * vi.height, 16);
 
-    if (!blur_frame || !edge_mask || !direction || !buff || !hysteresiss_map) {
-        env->ThrowError("TCannyMod: failed to allocate temporal buffer.");
+    if (!blur_frame || !buff) {
+        env->ThrowError("%s: failed to allocate temporal buffer.", name);
+    }
+
+    if (mode < 4) {
+        edge_mask = (float*)_aligned_malloc(frame_pitch * sizeof(float) * vi.height, 16);
+        direction = (uint8_t*)_aligned_malloc(frame_pitch * vi.height, 16);
+        hysteresiss_map = (uint8_t*)malloc(vi.width * vi.height);
+        if (!edge_mask || !direction || !hysteresiss_map) {
+            env->ThrowError("TCannyMod: failed to allocate temporal buffer.");
+        }
     }
 }
 
@@ -91,9 +96,9 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax,
 TCannyM::~TCannyM()
 {
     _aligned_free(blur_frame);
+    _aligned_free(buff);
     _aligned_free(edge_mask);
     _aligned_free(direction);
-    _aligned_free(buff);
     free(hysteresiss_map);
 }
 
@@ -184,8 +189,26 @@ create_tcannymod(AVSValue args, void* user_data, IScriptEnvironment* env)
     }
 
     return new TCannyM(args[0].AsClip(), mode, sigma, min, max, chroma,
+                       "TCannyMod", env);
+}
+
+
+static AVSValue __cdecl
+create_gblur(AVSValue args, void* user_data, IScriptEnvironment* env)
+{
+    float sigma = args[1].AsFloat(1.0);
+    if (sigma <= 0.0f) {
+        env->ThrowError("GBlur: sigma must be greater than zero.");
+    }
+    int chroma = args[2].AsInt(1);
+    if (chroma < 0 || chroma > 3) {
+        env->ThrowError("GBlur: chroma must be set to 0, 1, 2 or 3.");
+    }
+    
+    return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma, "GBlur",
                        env);
 }
+
 
 extern "C" __declspec(dllexport) const char * __stdcall
 AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors)
@@ -193,5 +216,6 @@ AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors)
     AVS_linkage = vectors;
     env->AddFunction("TCannyMod", "c[mode]i[sigma]f[t_h]f[t_l]f[chroma]i",
                      create_tcannymod, 0);
+    env->AddFunction("GBlur", "c[sigma]f[chroma]i", create_gblur, 0);
     return "Canny edge detection filter for Avisynth2.6 ver." TCANNY_M_VERSION;
 }

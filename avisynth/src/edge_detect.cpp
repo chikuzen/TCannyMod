@@ -163,27 +163,23 @@ void __stdcall TCannyM::non_max_suppress(int width, int height)
 
     for (int y = 1; y < height - 1; y++) {
         dir += frame_pitch;
-        dstp[0] = 0.0f;
+        dstp[0] = -FLT_MAX;
         for (int x = 1; x < width - 1; x++) {
-            float p0, p1;
+            float p0;
             if (dir[x] == 1) {
-                p0 = edgep[x + 1];
-                p1 = edgep[x - 1];
+                p0 = max(edgep[x + 1], edgep[x - 1]);
             } else if (dir[x] == 3) {
-                p0 = edgep[x + 1 - frame_pitch];
-                p1 = edgep[x - 1 + frame_pitch];
+                p0 = max(edgep[x + 1 - frame_pitch], edgep[x - 1 + frame_pitch]);
             } else if (dir[x] == 7) {
-                p0 = edgep[x - frame_pitch];
-                p1 = edgep[x + frame_pitch];
+                p0 = max(edgep[x - frame_pitch], edgep[x + frame_pitch]);
             } else {
-                p0 = edgep[x - 1 - frame_pitch];
-                p1 = edgep[x + 1 + frame_pitch];
+                p0 = max(edgep[x - 1 - frame_pitch], edgep[x + 1 + frame_pitch]);
             }
-            if (edgep[x] < p0 || edgep[x] < p1) {
+            if (edgep[x] < p0) {
                 dstp[x] = -FLT_MAX;
             }
         }
-        dstp[width - 1] = 0;
+        dstp[width - 1] = -FLT_MAX;
         edgep += frame_pitch;
         dstp += frame_pitch;
     }
@@ -221,7 +217,7 @@ void __stdcall TCannyM::hysteresiss(int width, int height)
                 int32_t ymin = posy > 0 ? posy - 1 : 0;
                 int32_t ymax = posy < height - 1 ? posy + 1 : posy;
                 for (int32_t yy = ymin; yy <= ymax; yy++) {
-                    for (int32_t xx = xmin; xx <= xmax + 1; xx++) {
+                    for (int32_t xx = xmin; xx <= xmax; xx++) {
                         if (edgep[xx + yy * pitch] > tmin
                             && !map[xx + yy * width]) {
                             edgep[xx + yy * pitch] = FLT_MAX;

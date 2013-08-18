@@ -30,7 +30,7 @@
 #include <windows.h>
 #include "avisynth.h"
 
-#define TCANNY_M_VERSION "0.0.1"
+#define TCANNY_M_VERSION "0.1.0"
 
 #define GB_MAX_LENGTH 17
 
@@ -64,7 +64,7 @@ class TCannyM : public GenericVideoFilter {
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
-            int chroma, IScriptEnvironment* env);
+            int chroma, const char* name, IScriptEnvironment* env);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env);
 };

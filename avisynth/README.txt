@@ -34,7 +34,7 @@ Syntax:
 
             4 - Gaussian blured frame.
 
-        sigma - standard deviation of gaussian blur (default = 1.5)
+        sigma - standard deviation of gaussian blur (0 < sigma <= 2.83. default = 1.5)
 
         t_h - high gradient magnitude threshold for hysteresis (default = 8.0)
 
@@ -49,6 +49,22 @@ Syntax:
             2 - copy from source.
 
             3 - fill with 0x80(128). output is grayscale.
+
+    ------------------------------------------------------------------------
+
+    GBlur(clip, float "sigma", int "chroma")
+
+    info:
+        Gaussian blur filter. Just an alias of TCannyMod(mode=4).
+
+    parameters:
+
+        clip - same as TCannyMod.
+
+        sigma - same as TCannyMod. (default = 0.5)
+
+        chroma - same as TCannyMod. (default = 1)
+
 
 Requirement:
 

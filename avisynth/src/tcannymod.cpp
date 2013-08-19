@@ -51,9 +51,9 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
 
 
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax,
-                 int c, const char* name, IScriptEnvironment* env)
+                 int c, bool sobel, const char* n, IScriptEnvironment* env)
     : GenericVideoFilter(ch), mode(m), gb_radius(0), th_min(tmin), th_max(tmax),
-      chroma(c), edge_mask(0), direction(0), hysteresiss_map(0)
+      chroma(c), edge_mask(0), direction(0), hysteresiss_map(0), name(n)
 {
     if (!vi.IsPlanar()) {
         env->ThrowError("%s: Planar format only.", name);
@@ -67,9 +67,11 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax,
         env->ThrowError("%s: width/height must be smaller than 65536.", name);
     }
 
-    set_gb_kernel(sigma, gb_radius, gb_kernel);
-    if (gb_radius == 0) {
-        env->ThrowError("%s: sigma is too large.", name);
+    if (sigma > 0.0f) {
+        set_gb_kernel(sigma, gb_radius, gb_kernel);
+        if (gb_radius == 0) {
+            env->ThrowError("%s: sigma is too large.", name);
+        }
     }
 
     buff_pitch = ((vi.width + 16 + 15) / 16) * 16;
@@ -90,6 +92,8 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax,
             env->ThrowError("TCannyMod: failed to allocate temporal buffer.");
         }
     }
+    
+    edge_detect = sobel ? &TCannyM::sobel_operator : &TCannyM::standerd_operator;
 }
 
 
@@ -131,13 +135,17 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, IScriptEnvironment* env)
             continue;
         }
 
+        if ((intptr_t)srcp & 15) {
+            env->ThrowError("%s: Invalid memory alignment", name);
+        }
+
         gaussian_blur(srcp, src_pitch, width, height);
         if (mode == 4) {
             write_dst_frame(blur_frame, dstp, width, height, dst_pitch);
             continue;
         }
 
-        edge_detect(width, height);
+        (this->*edge_detect)(width, height);
         if (mode == 1) {
             write_dst_frame(edge_mask, dstp, width, height, dst_pitch);
             continue;
@@ -169,7 +177,7 @@ create_tcannymod(AVSValue args, void* user_data, IScriptEnvironment* env)
     }
 
     float sigma = args[2].AsFloat(1.5);
-    if (sigma <= 0.0f) {
+    if (sigma < 0.0f) {
         env->ThrowError("TCannyMod: sigma must be greater than zero.");
     }
 
@@ -183,30 +191,30 @@ create_tcannymod(AVSValue args, void* user_data, IScriptEnvironment* env)
         env->ThrowError("TCannyMod: t_h must be greater than t_l.");
     }
 
-    int chroma = args[5].AsInt(0);
+    int chroma = args[6].AsInt(0);
     if (chroma < 0 || chroma > 3) {
         env->ThrowError("TCannyMod: chroma must be set to 0, 1, 2 or 3.");
     }
 
     return new TCannyM(args[0].AsClip(), mode, sigma, min, max, chroma,
-                       "TCannyMod", env);
+                       args[5].AsBool(false), "TCannyMod", env);
 }
 
 
 static AVSValue __cdecl
 create_gblur(AVSValue args, void* user_data, IScriptEnvironment* env)
 {
-    float sigma = args[1].AsFloat(1.0);
-    if (sigma <= 0.0f) {
+    float sigma = args[1].AsFloat(0.5);
+    if (sigma < 0.0f) {
         env->ThrowError("GBlur: sigma must be greater than zero.");
     }
     int chroma = args[2].AsInt(1);
     if (chroma < 0 || chroma > 3) {
         env->ThrowError("GBlur: chroma must be set to 0, 1, 2 or 3.");
     }
-    
-    return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma, "GBlur",
-                       env);
+
+    return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma, false,
+                       "GBlur", env);
 }
 
 
@@ -214,7 +222,7 @@ extern "C" __declspec(dllexport) const char * __stdcall
 AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors)
 {
     AVS_linkage = vectors;
-    env->AddFunction("TCannyMod", "c[mode]i[sigma]f[t_h]f[t_l]f[chroma]i",
+    env->AddFunction("TCannyMod", "c[mode]i[sigma]f[t_h]f[t_l]f[sobel]b[chroma]i",
                      create_tcannymod, 0);
     env->AddFunction("GBlur", "c[sigma]f[chroma]i", create_gblur, 0);
     return "Canny edge detection filter for Avisynth2.6 ver." TCANNY_M_VERSION;

@@ -27,6 +27,29 @@
 #include "tcannymod.hpp"
 
 
+static void __stdcall
+convert_to_float(int width, int height, const uint8_t* srcp, float* dstp,
+                 int src_pitch, int dst_pitch)
+{
+    __m128i zero = _mm_setzero_si128();
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x += 16) {
+            __m128i xmm0 = _mm_load_si128((__m128i*)(srcp + x));
+            __m128i xmm1 = _mm_unpackhi_epi8(xmm0, zero);
+            xmm0 = _mm_unpacklo_epi8(xmm0, zero);
+
+            _mm_store_ps(dstp + x, _mm_cvtepi32_ps(_mm_unpacklo_epi16(xmm0, zero)));
+            _mm_store_ps(dstp + x + 4, _mm_cvtepi32_ps(_mm_unpackhi_epi16(xmm0, zero)));
+            _mm_store_ps(dstp + x + 8, _mm_cvtepi32_ps(_mm_unpacklo_epi16(xmm1, zero)));
+            _mm_store_ps(dstp + x + 12, _mm_cvtepi32_ps(_mm_unpackhi_epi16(xmm1, zero)));
+        }
+        srcp += src_pitch;
+        dstp += dst_pitch;
+    }
+}
+
+
 static inline void __stdcall
 horizontal_blur(float* srcp, const int radius, const int length, int width,
                 float* kernel, float* dstp)
@@ -59,6 +82,11 @@ horizontal_blur(float* srcp, const int radius, const int length, int width,
 void __stdcall TCannyM::
 gaussian_blur(const uint8_t* srcp, int src_pitch, int width, int height)
 {
+    if (gb_radius == 0) {
+        convert_to_float(width, height, srcp, blur_frame, src_pitch, frame_pitch);
+        return;
+    }
+
     const int length = gb_radius * 2 + 1;
 
     const uint8_t *p[GB_MAX_LENGTH];

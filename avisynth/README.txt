@@ -7,7 +7,7 @@ based on tcanny written by Kevin Stone(a.k.a. tritical).
 
 Syntax:
 
-    TCannyMod(clip, int "mode", float "sigma", float "t_h", float "t_l", int "chroma")
+    TCannyMod(clip, int "mode", float "sigma", float "t_h", float "t_l", bool "sobel", int "chroma")
 
     info:
         Builds an edge map using canny edge detection.
@@ -34,11 +34,15 @@ Syntax:
 
             4 - Gaussian blured frame.
 
-        sigma - standard deviation of gaussian blur (0 < sigma <= 2.83. default = 1.5)
+        sigma - standard deviation of gaussian blur. 
+                0 means not bluring before edge detection.
+                (0 <= sigma <= 2.83, default = 1.5)
 
         t_h - high gradient magnitude threshold for hysteresis (default = 8.0)
 
         t_l - low gradient magnitude threshold for hysteresis (default = 1.0)
+
+        sobel - use Sobel operator instead of [1, 0, -1] for edge detection. (default = false)
 
         chroma - processing of chroma (default = 0)
 

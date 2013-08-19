@@ -36,6 +36,7 @@
 
 
 class TCannyM : public GenericVideoFilter {
+    const char* name;
     int mode;
     int chroma;
     float th_min;
@@ -52,7 +53,8 @@ class TCannyM : public GenericVideoFilter {
 
     void __stdcall gaussian_blur(const uint8_t* srcp, int src_pitch, int width,
                                  int height);
-    void __stdcall edge_detect(int width, int height);
+    void __stdcall standerd_operator(int width, int height);
+    void __stdcall sobel_operator(int width, int height);
     void __stdcall non_max_suppress(int width, int height);
     void __stdcall hysteresiss(int width, int height);
     void __stdcall write_dst_frame(const float* srcp, uint8_t* dstp, int width,
@@ -61,10 +63,11 @@ class TCannyM : public GenericVideoFilter {
                                         int dst_pitch);
     void __stdcall write_binary_mask(int width, int height, uint8_t* dstp,
                                      int dst_pitch);
+    void (__stdcall TCannyM::*edge_detect)(int width, int height);
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
-            int chroma, const char* name, IScriptEnvironment* env);
+            int chroma, bool sobel, const char* name, IScriptEnvironment* env);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env);
 };

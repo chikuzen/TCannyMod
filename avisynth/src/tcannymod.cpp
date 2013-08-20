@@ -37,6 +37,7 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
     radius = max((int)(sigma * 3.0f + 0.5f), 1);
     int length = radius * 2 + 1;
     if (length > GB_MAX_LENGTH) {
+        radius = 0;
         return;
     }
 

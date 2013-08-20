@@ -30,7 +30,7 @@
 #include <windows.h>
 #include "avisynth.h"
 
-#define TCANNY_M_VERSION "0.1.0"
+#define TCANNY_M_VERSION "0.1.1"
 
 #define GB_MAX_LENGTH 17
 

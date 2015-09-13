@@ -1,0 +1,12 @@
+avisynth/src/Release
+avisynth/src/Debug
+avisynth/src/x64
+avisynth/src/.vs
+avisynth/archives
+*.opensdf
+*.sdf
+*.suo
+*.vcxproj.filters
+*.vcxproj.user
+*.dll
+*.avs

@@ -7,7 +7,8 @@ based on tcanny written by Kevin Stone(a.k.a. tritical).
 
 Syntax:
 
-    TCannyMod(clip, int "mode", float "sigma", float "t_h", float "t_l", bool "sobel", int "chroma")
+    TCannyMod(clip, int "mode", float "sigma", float "t_h", float "t_l",
+              bool "sobel", int "chroma", float gmmax)
 
     info:
         Builds an edge map using canny edge detection.
@@ -53,6 +54,9 @@ Syntax:
             2 - copy from source.
 
             3 - fill with 0x80(128). output is grayscale.
+
+        gmmax - used for scaling gradient magnitude into [0,255] for mode=1 (default = 255)
+                 gmmax is internally set to 1.0 if you set it to < 1.0.
 
     ------------------------------------------------------------------------
 

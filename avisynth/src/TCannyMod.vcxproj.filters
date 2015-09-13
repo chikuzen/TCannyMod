@@ -29,10 +29,13 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="avisynth.h">
+    <ClInclude Include="tcannymod.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="tcannymod.hpp">
+    <ClInclude Include="write_frame.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="avisynth.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

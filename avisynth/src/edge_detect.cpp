@@ -38,21 +38,21 @@ static inline void line_copy(float* dstp, const float* srcp, int width)
 }
 
 
-static inline __m128 mm_abs_ps(const __m128& val)
+static __forceinline __m128 mm_abs_ps(const __m128& val)
 {
     const __m128 mask = _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF));
     return _mm_and_ps(val, mask);
 }
 
 
-static inline __m128 mm_ivtsign_ps(const __m128& val)
+static __forceinline __m128 mm_ivtsign_ps(const __m128& val)
 {
     const __m128 mask = _mm_castsi128_ps(_mm_set1_epi32(0x80000000));
     return _mm_xor_ps(val, mask);
 }
 
 
-static inline __m128 mm_rcp_hq_ps(const __m128& xmm0)
+static __forceinline __m128 mm_rcp_hq_ps(const __m128& xmm0)
 {
     __m128 rcp = _mm_rcp_ps(xmm0);
     __m128 xmm1 =  _mm_mul_ps(_mm_mul_ps(xmm0, rcp), rcp);
@@ -61,7 +61,7 @@ static inline __m128 mm_rcp_hq_ps(const __m128& xmm0)
 }
 
 
-static inline __m128i mm_calc_dir(const __m128& gx, const __m128& gy)
+static __forceinline __m128i mm_calc_dir(const __m128& gx, const __m128& gy)
 {
     static const float t0225 = (float)(sqrt(2.0) - 1.0); // tan(pi/8)
     static const float t0675 = (float)(sqrt(2.0) + 1.0); // tan(3*pi/8)
@@ -132,13 +132,13 @@ void __stdcall TCannyM::standerd_operator(int width, int height)
 
                 gx = _mm_add_ps(_mm_mul_ps(gx, gx), _mm_mul_ps(gy, gy));
                 gx = _mm_sqrt_ps(gx);
-                _mm_store_ps(dstp + x + i * 4, gx);
+                _mm_stream_ps(dstp + x + i * 4, gx);
             }
 
             d[0] = _mm_packs_epi32(d[0], d[1]);
             d[1] = _mm_packs_epi32(d[2], d[3]);
             d[0] = _mm_packs_epi16(d[0], d[1]);
-            _mm_store_si128((__m128i*)(dir + x), d[0]);
+            _mm_stream_si128((__m128i*)(dir + x), d[0]);
         }
         dstp += frame_pitch;
         dir += frame_pitch;
@@ -191,13 +191,13 @@ void __stdcall TCannyM::sobel_operator(int width, int height)
 
                 gx = _mm_add_ps(_mm_mul_ps(gx, gx), _mm_mul_ps(gy, gy));
                 gx = _mm_sqrt_ps(gx);
-                _mm_store_ps(dstp + x + i * 4, gx);
+                _mm_stream_ps(dstp + x + i * 4, gx);
             }
 
             d[0] = _mm_packs_epi32(d[0], d[1]);
             d[1] = _mm_packs_epi32(d[2], d[3]);
             d[0] = _mm_packs_epi16(d[0], d[1]);
-            _mm_store_si128((__m128i*)(dir + x), d[0]);
+            _mm_stream_si128((__m128i*)(dir + x), d[0]);
         }
         dstp += frame_pitch;
         dir += frame_pitch;

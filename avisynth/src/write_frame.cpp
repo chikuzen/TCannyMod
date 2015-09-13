@@ -82,7 +82,7 @@ write_edge_direction(const float* edgep, const uint8_t* dir, float th_max,
             xmm0 = _mm_packs_epi16(_mm_packs_epi32(xmm0, xmm1), _mm_packs_epi32(xmm2, xmm3));
             xmm1 = _mm_load_si128((__m128i*)(dir + x));
             xmm0 = _mm_and_si128(xmm0, xmm1);
-            _mm_store_si128((__m128i*)(dstp + x), xmm0);
+            _mm_stream_si128((__m128i*)(dstp + x), xmm0);
         }
         edgep += frame_pitch;
         dir += frame_pitch;
@@ -104,7 +104,7 @@ write_binary_mask(const float* srcp, float th_max, int width, int height,
             __m128i xmm2 = _mm_castps_si128(_mm_cmpge_ps(_mm_load_ps(srcp + x + 8), tmax));
             __m128i xmm3 = _mm_castps_si128(_mm_cmpge_ps(_mm_load_ps(srcp + x + 12), tmax));
             xmm0 = _mm_packs_epi16(_mm_packs_epi32(xmm0, xmm1), _mm_packs_epi32(xmm2, xmm3));
-            _mm_store_si128((__m128i*)(dstp + x), xmm0);
+            _mm_stream_si128((__m128i*)(dstp + x), xmm0);
         }
         srcp += src_pitch;
         dstp += dst_pitch;

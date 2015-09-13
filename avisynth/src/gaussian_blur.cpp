@@ -39,10 +39,10 @@ convert_to_float(int width, int height, const uint8_t* srcp, float* dstp,
             __m128i xmm1 = _mm_unpackhi_epi8(xmm0, zero);
             xmm0 = _mm_unpacklo_epi8(xmm0, zero);
 
-            _mm_store_ps(dstp + x, _mm_cvtepi32_ps(_mm_unpacklo_epi16(xmm0, zero)));
-            _mm_store_ps(dstp + x + 4, _mm_cvtepi32_ps(_mm_unpackhi_epi16(xmm0, zero)));
-            _mm_store_ps(dstp + x + 8, _mm_cvtepi32_ps(_mm_unpacklo_epi16(xmm1, zero)));
-            _mm_store_ps(dstp + x + 12, _mm_cvtepi32_ps(_mm_unpackhi_epi16(xmm1, zero)));
+            _mm_stream_ps(dstp + x, _mm_cvtepi32_ps(_mm_unpacklo_epi16(xmm0, zero)));
+            _mm_stream_ps(dstp + x + 4, _mm_cvtepi32_ps(_mm_unpackhi_epi16(xmm0, zero)));
+            _mm_stream_ps(dstp + x + 8, _mm_cvtepi32_ps(_mm_unpacklo_epi16(xmm1, zero)));
+            _mm_stream_ps(dstp + x + 12, _mm_cvtepi32_ps(_mm_unpackhi_epi16(xmm1, zero)));
         }
         srcp += src_pitch;
         dstp += dst_pitch;
@@ -74,7 +74,7 @@ horizontal_blur(float* srcp, const int radius, const int length, int width,
             __m128 xmm0 = _mm_loadu_ps(srcp + x + i);
             sum = _mm_add_ps(sum, _mm_mul_ps(xmm0, k));
         }
-        _mm_store_ps(dstp + x, sum);
+        _mm_stream_ps(dstp + x, sum);
     }
 }
 

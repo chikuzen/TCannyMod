@@ -26,9 +26,11 @@
 #ifndef TCANNY_MOD_HPP
 #define TCANNY_MOD_HPP
 
-#include <stdint.h>
+#include <cstdint>
 #include <windows.h>
 #include "avisynth.h"
+#include "write_frame.h"
+
 
 #define TCANNY_M_VERSION "0.1.1"
 
@@ -41,6 +43,7 @@ class TCannyM : public GenericVideoFilter {
     int chroma;
     float th_min;
     float th_max;
+    float scale;
     int gb_radius; // max: 8
     float gb_kernel[GB_MAX_LENGTH];
     float *buff;
@@ -55,19 +58,16 @@ class TCannyM : public GenericVideoFilter {
                                  int height);
     void __stdcall standerd_operator(int width, int height);
     void __stdcall sobel_operator(int width, int height);
+    write_dst_frame_t write_gblur_frame;
+    write_dst_frame_t write_gradient_mask;
     void __stdcall non_max_suppress(int width, int height);
     void __stdcall hysteresiss(int width, int height);
-    void __stdcall write_dst_frame(const float* srcp, uint8_t* dstp, int width,
-                                   int height, int dst_pitch);
-    void __stdcall write_edge_direction(int width, int height, uint8_t* dstp,
-                                        int dst_pitch);
-    void __stdcall write_binary_mask(int width, int height, uint8_t* dstp,
-                                     int dst_pitch);
     void (__stdcall TCannyM::*edge_detect)(int width, int height);
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
-            int chroma, bool sobel, const char* name, IScriptEnvironment* env);
+            int chroma, bool sobel, float scale, const char* name,
+            IScriptEnvironment* env);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env);
 };

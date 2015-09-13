@@ -24,35 +24,53 @@
 
 
 #include <emmintrin.h>
-#include "tcannymod.hpp"
+#include "write_frame.h"
 
 
-void __stdcall TCannyM::
+template <bool SCALE>
+static void __stdcall
 write_dst_frame(const float* srcp, uint8_t* dstp, int width, int height,
-                int dst_pitch)
+                int dst_pitch, int src_pitch, float scale)
 {
+    static const __m128 vec_scale = _mm_set1_ps(scale);
+
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x += 16) {
-            __m128i xmm0 = _mm_cvtps_epi32(_mm_load_ps(srcp + x));
-            __m128i xmm1 = _mm_cvtps_epi32(_mm_load_ps(srcp + x + 4));
-            __m128i xmm2 = _mm_cvtps_epi32(_mm_load_ps(srcp + x + 8));
-            __m128i xmm3 = _mm_cvtps_epi32(_mm_load_ps(srcp + x + 12));
+            __m128 s0 = _mm_load_ps(srcp + x);
+            __m128 s1 = _mm_load_ps(srcp + x + 4);
+            __m128 s2 = _mm_load_ps(srcp + x + 8);
+            __m128 s3 = _mm_load_ps(srcp + x + 12);
+            if (SCALE) {
+                s0 = _mm_mul_ps(s0, vec_scale);
+                s1 = _mm_mul_ps(s1, vec_scale);
+                s2 = _mm_mul_ps(s2, vec_scale);
+                s3 = _mm_mul_ps(s3, vec_scale);
+            }
+            __m128i xmm0 = _mm_cvtps_epi32(s0);
+            __m128i xmm1 = _mm_cvtps_epi32(s1);
+            __m128i xmm2 = _mm_cvtps_epi32(s2);
+            __m128i xmm3 = _mm_cvtps_epi32(s3);
             xmm0 = _mm_packs_epi32(xmm0, xmm1);
             xmm1 = _mm_packs_epi32(xmm2, xmm3);
             xmm0 = _mm_packus_epi16(xmm0, xmm1);
-            _mm_store_si128((__m128i*)(dstp + x), xmm0);
+            _mm_stream_si128((__m128i*)(dstp + x), xmm0);
         }
-        srcp += frame_pitch;
+        srcp += src_pitch;
         dstp += dst_pitch;
     }
 }
 
-
-void __stdcall TCannyM::
-write_edge_direction(int width, int height, uint8_t* dstp, int dst_pitch)
+write_dst_frame_t get_write_dst_frame(bool scale)
 {
-    const float* edgep = blur_frame;
-    const uint8_t* dir = direction;
+    return scale ? write_dst_frame<true> : write_dst_frame<false>;
+}
+
+
+void __stdcall
+write_edge_direction(const float* edgep, const uint8_t* dir, float th_max,
+                     int width, int height, const int frame_pitch,
+                     uint8_t* dstp, int dst_pitch)
+{
     __m128 tmax = _mm_set1_ps(th_max);
 
     for (int y = 0; y < height; y++) {
@@ -73,10 +91,10 @@ write_edge_direction(int width, int height, uint8_t* dstp, int dst_pitch)
 }
 
 
-void __stdcall TCannyM::
-write_binary_mask(int width, int height, uint8_t* dstp, int dst_pitch)
+void __stdcall
+write_binary_mask(const float* srcp, float th_max, int width, int height,
+                  int src_pitch, uint8_t* dstp, int dst_pitch)
 {
-    const float* srcp = blur_frame;
     __m128 tmax = _mm_set1_ps(th_max);
 
     for (int y = 0; y < height; y++) {
@@ -88,7 +106,7 @@ write_binary_mask(int width, int height, uint8_t* dstp, int dst_pitch)
             xmm0 = _mm_packs_epi16(_mm_packs_epi32(xmm0, xmm1), _mm_packs_epi32(xmm2, xmm3));
             _mm_store_si128((__m128i*)(dstp + x), xmm0);
         }
-        srcp += frame_pitch;
+        srcp += src_pitch;
         dstp += dst_pitch;
     }
 }

@@ -89,9 +89,9 @@ gaussian_blur(const uint8_t* srcp, int src_pitch, int width, int height)
 
     const int length = gb_radius * 2 + 1;
 
-    const uint8_t *p[GB_MAX_LENGTH];
+    const int32_t *p[GB_MAX_LENGTH];
     for (int i = -gb_radius; i <= gb_radius; i++) {
-        p[i + gb_radius] = srcp + abs(i) * src_pitch;
+        p[i + gb_radius] = (int32_t*)(srcp + abs(i) * src_pitch);
     }
 
     float *dstp = buff + 8;
@@ -100,28 +100,18 @@ gaussian_blur(const uint8_t* srcp, int src_pitch, int width, int height)
     __m128 zerof = _mm_castsi128_ps(zero);
 
     for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x += 16) {
-            __m128 sum[4] = {zerof, zerof, zerof, zerof};
+        for (int x = 0; x < width; x += 4) {
+            __m128 sum = zerof;
 
             for (int i = 0; i < length; i++) {
-                __m128 input[4];
-                __m128i xmm0 = _mm_load_si128((__m128i*)(p[i] + x));
-                __m128i xmm1 = _mm_unpackhi_epi8(xmm0, zero);
-                xmm0 = _mm_unpacklo_epi8(xmm0, zero);
-                input[0] = _mm_cvtepi32_ps(_mm_unpacklo_epi16(xmm0, zero));
-                input[1] = _mm_cvtepi32_ps(_mm_unpackhi_epi16(xmm0, zero));
-                input[2] = _mm_cvtepi32_ps(_mm_unpacklo_epi16(xmm1, zero));
-                input[3] = _mm_cvtepi32_ps(_mm_unpackhi_epi16(xmm1, zero));
+                __m128i xmm0 = _mm_cvtsi32_si128(*(p[i] + x / 4));
+                xmm0 = _mm_unpacklo_epi16(_mm_unpacklo_epi8(xmm0, zero), zero);
+                __m128 input = _mm_cvtepi32_ps(xmm0);
                 __m128 k = _mm_set1_ps(gb_kernel[i]);
 
-                for (int j = 0; j < 4; j++) {
-                    sum[j] = _mm_add_ps(sum[j], _mm_mul_ps(k, input[j]));
-                }
+                sum = _mm_add_ps(sum, _mm_mul_ps(k, input));
             }
-            _mm_store_ps(dstp + x,      sum[0]);
-            _mm_store_ps(dstp + x +  4, sum[1]);
-            _mm_store_ps(dstp + x +  8, sum[2]);
-            _mm_store_ps(dstp + x + 12, sum[3]);
+            _mm_store_ps(dstp + x, sum);
         }
         horizontal_blur(dstp, gb_radius, length, width, gb_kernel,
                         blur_frame + frame_pitch * y);
@@ -129,6 +119,6 @@ gaussian_blur(const uint8_t* srcp, int src_pitch, int width, int height)
         for (int i = 0; i < length - 1; i++) {
             p[i] = p[i + 1];
         }
-        p[length - 1] += (y < height - gb_radius - 1 ? 1 : -1) * src_pitch;
+        p[length - 1] += (y < height - gb_radius - 1 ? 1 : -1) * src_pitch / 4;
     }
 }

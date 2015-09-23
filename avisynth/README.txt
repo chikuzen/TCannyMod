@@ -76,9 +76,9 @@ Syntax:
 
 Requirement:
 
-    Avisynth2.6 alpha4 or later
-    Microsoft Visual C++ 2010 Redistributable Package
-    WindowsXPsp3/Vista/7/8
+    Avisynth2.60 or Avisynth+
+    Microsoft Visual C++ 2013 Redistributable Package
+    WindowsVistasp2/7sp1/8.1/10
     SSE2 capable CPU
 
 Source code:

@@ -88,10 +88,11 @@ Syntax:
 
 Note:
 
-    TCannyMod requires appropriate memry alignments.
-    Thus, if you want to crop the left side of your source clip before this filter,
-    you have to set crop(align=true).
+    - TCannyMod requires appropriate memry alignments.
+      Thus, if you want to crop the left side of your source clip before this filter,
+      you have to set crop(align=true).
 
+    - TCannyMod_avx.dll is compiled with /arch:AVX.
 
 Requirements:
 

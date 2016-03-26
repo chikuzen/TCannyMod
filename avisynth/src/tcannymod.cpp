@@ -341,7 +341,7 @@ extern "C" __declspec(dllexport) const char * __stdcall
 AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors)
 {
     AVS_linkage = vectors;
-    env->AddFunction("TCannyMod2",
+    env->AddFunction("TCannyMod",
              /*0*/   "c"
              /*1*/   "[mode]i"
              /*2*/   "[sigma]f"
@@ -351,6 +351,6 @@ AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors)
              /*6*/   "[chroma]i"
              /*7*/   "[gmmax]f"
              /*8*/   "[opt]i", create_tcannymod, nullptr);
-    env->AddFunction("GBlur2", "c[sigma]f[chroma]i[opt]i", create_gblur, nullptr);
+    env->AddFunction("GBlur", "c[sigma]f[chroma]i[opt]i", create_gblur, nullptr);
     return "Canny edge detection filter for Avisynth2.6 ver." TCANNY_M_VERSION;
 }

@@ -98,6 +98,8 @@ Requirements:
     Avisynth2.6.0/Avisynth+r1576 or greater.
     Microsoft Visual C++ 2015 Redistributable Package
     WindowsVistaSP2 or later
+    Avisynth2.60 or Avisynth+
+    WindowsVistasp2/7sp1/8.1/10
     SSE2 capable CPU
 
 

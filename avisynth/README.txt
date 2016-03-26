@@ -1,4 +1,4 @@
-TCannyMod - Canny edge detection filter for Avisynth2.6
+TCannyMod - Canny edge detection filter for Avisynth2.6.0 / Avisynth+
 
 
 TCannyMod is an Avisynth filter plugin rewritten from scratch to Avisynth2.6
@@ -27,11 +27,11 @@ Syntax:
 
             3 - gradient direction map
 
-                Gradient direction are normarized to 1, 3, 7 and 15.
-                    1 = horizontal
-                    3 = 45' up
-                    7 = vertical
-                    15 = 45' down
+                Gradient direction are normarized to 31, 63, 127 and 255.
+                   31 = horizontal
+                   63 = 45' up
+                  127 = vertical
+                  255 = 45' down
 
             4 - Gaussian blured frame.
 
@@ -55,10 +55,20 @@ Syntax:
 
             3 - fill with 0x80(128). output is grayscale.
 
+            4 - fill with 0.
+
         gmmax - used for scaling gradient magnitude into [0,255] for mode=1 (default = 255)
                  gmmax is internally set to 1.0 if you set it to < 1.0.
 
-    ------------------------------------------------------------------------
+        opt - specify which CPU optimization are used (default = auto.)
+
+             0 - forth SSE2 + SSE routine.
+
+             1 - forth SSE4.1 + SSE2 + SSE routine.
+
+             others(64bit only) - use AVX2 + FMA3 + AVX routine.
+
+ ------------------------------------------------------------------------
 
     GBlur(clip, float "sigma", int "chroma")
 
@@ -73,13 +83,32 @@ Syntax:
 
         chroma - same as TCannyMod. (default = 1)
 
+        opt - same as TCannyMod. (default = -1)
 
-Requirement:
 
-    Avisynth2.60/Avisynth+
-    Microsoft Visual C++ 2013 Redistributable Package
+Note:
+
+    TCannyMod requires appropriate memry alignments.
+    Thus, if you want to crop the left side of your source clip before this filter,
+    you have to set crop(align=true).
+
+
+Requirements:
+
+    Avisynth2.6.0/Avisynth+r1576 or greater.
+    Microsoft Visual C++ 2015 Redistributable Package
     WindowsVistaSP2 or later
     SSE2 capable CPU
+
+
+Changelog:
+
+    1.0.0 (20160326):
+        - Almost rewrite.
+        - VS2013 to VS2015.
+        - Add AVX2(64bit only) / SSE4.1(both 32bit and 64bit) support.
+        - Change direction values from 1,3,7,15 to 31,63,127,255.
+        - Reduce waste processes.
 
 Source code:
 

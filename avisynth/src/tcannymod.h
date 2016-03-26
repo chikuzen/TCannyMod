@@ -1,5 +1,5 @@
 /*
-  tcannymod.hpp
+  tcannymod.h
 
   This file is part of TCannyMod
 
@@ -23,53 +23,65 @@
 */
 
 
-#ifndef TCANNY_MOD_HPP
-#define TCANNY_MOD_HPP
+#ifndef TCANNY_MOD_H
+#define TCANNY_MOD_H
 
 #include <cstdint>
+#ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+#endif
 #include <windows.h>
-#include "avisynth.h"
+#include <avisynth.h>
+#include "gaussian_blur.h"
+#include "edge_detection.h"
 #include "write_frame.h"
 
 
-#define TCANNY_M_VERSION "0.2.0"
+#define TCANNY_M_VERSION "1.0.0"
 
-#define GB_MAX_LENGTH 17
+constexpr size_t GB_MAX_LENGTH = 17;
+
+typedef IScriptEnvironment ise_t;
 
 
 class TCannyM : public GenericVideoFilter {
     const char* name;
+    int numPlanes;
+    size_t align;
     int mode;
     int chroma;
     float th_min;
     float th_max;
     float scale;
-    int gb_radius; // max: 8
-    float gb_kernel[GB_MAX_LENGTH];
-    float *buff;
-    int buff_pitch;
-    float *blur_frame;
-    float *edge_mask;
-    uint8_t *direction;
-    int frame_pitch;
-    uint8_t* hysteresiss_map;
+    bool calc_dir;
+    int gbRadius; // max: 8
+    float gbKernel[GB_MAX_LENGTH];
+    size_t blurPitch;
+    size_t emaskPitch;
+    size_t dirHystPitch;
+    size_t buffSize;
+    size_t blurSize;
+    size_t emaskSize;
+    size_t dirSize;
+    size_t hystSize;
 
-    void __stdcall gaussian_blur(const uint8_t* srcp, int src_pitch, int width,
-                                 int height);
-    void __stdcall standerd_operator(int width, int height);
-    void __stdcall sobel_operator(int width, int height);
-    write_dst_frame_t write_gblur_frame;
-    write_dst_frame_t write_gradient_mask;
-    void __stdcall non_max_suppress(int width, int height);
-    void __stdcall hysteresiss(int width, int height);
-    void (__stdcall TCannyM::*edge_detect)(int width, int height);
+    gaussian_blur_t gaussianBlur;
+    edge_detection_t edgeDetection;
+    write_gradient_mask_t writeBluredFrame;
+    write_gradient_mask_t writeGradientMask;
+    write_direction_map_t writeDirectionMap;
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
-            int chroma, bool sobel, float scale, const char* name,
-            IScriptEnvironment* env);
-    ~TCannyM();
-    PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env);
+            int chroma, bool sobel, float scale, int opt, const char* name,
+            ise_t* env);
+    ~TCannyM() {}
+    PVideoFrame __stdcall GetFrame(int n, ise_t* env);
 };
 
+extern int has_sse2();
+extern int has_sse41();
+extern int has_avx();
+extern int has_avx2();
 #endif

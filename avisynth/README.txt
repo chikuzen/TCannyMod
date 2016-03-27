@@ -35,7 +35,7 @@ Syntax:
 
             4 - Gaussian blured frame.
 
-        sigma - standard deviation of gaussian blur. 
+        sigma - standard deviation of gaussian blur.
                 0 means not bluring before edge detection.
                 (0 <= sigma <= 2.83, default = 1.5)
 
@@ -83,16 +83,43 @@ Syntax:
 
         chroma - same as TCannyMod. (default = 1)
 
-        opt - same as TCannyMod. (default = -1)
+        opt - same as TCannyMod. (default = automated)
+
+ ------------------------------------------------------------------------
+
+    EMask(clip, float "sigma", float "gmmax", int "chroma", bool "sobel", int "opt")
+
+    info:
+        Generate gradient magnitude edge map. Just an alias of TCannyMod(mode=1).
+
+    parameters:
+
+        clip - same as TCannyMod.
+
+        sigma - same as TCannyMod. (default = 1.5)
+
+        gmmax - same as TCannyMod. (default = 50.0)
+
+        chroma - same as TCannyMod. (default = 1)
+
+        sobel - same as TCannyMod. (default = false)
+
+        opt - same as TCannyMod. (default = automated)
+
+------------------------------------------------------------------------
+
 
 
 Note:
 
-    - TCannyMod requires appropriate memry alignments.
+    - TCannyMod requires appropriate memory alignments.
       Thus, if you want to crop the left side of your source clip before this filter,
       you have to set crop(align=true).
 
+    - Probabry, this filter work with Avisynth+'s "MT_NICE_FILTER" mode.(from v1.0.0)
+
     - TCannyMod_avx.dll is compiled with /arch:AVX.
+
 
 Requirements:
 
@@ -113,7 +140,8 @@ Changelog:
         - Change direction values from 1,3,7,15 to 31,63,127,255.
         - Reduce waste processes.
 
-    1.1.0 (20160327):
+    1.1.0 (20160328):
+        - Add EMask().
         - Implement simd non-maximum-suppression.
         - a bit optimized gaussian-blur/ hysteresis.
 

@@ -199,7 +199,7 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
 
     edgeDetection = get_edge_detection(sobel, (mode != 1 && mode != 4), arch);
 
-    nonMaximumSuppression = get_non_max_suppress(arch);//  non_max_suppress_c;
+    nonMaximumSuppression = get_non_max_suppress(arch);
 
     writeBluredFrame = get_write_gradient_mask(false, arch);
 
@@ -250,7 +250,7 @@ public:
 };
 
 
-PVideoFrame __stdcall TCannyM::GetFrame(int n, IScriptEnvironment* env)
+PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 {
     PVideoFrame src = child->GetFrame(n, env);
     PVideoFrame dst = env->NewVideoFrame(vi, align);
@@ -325,6 +325,13 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, IScriptEnvironment* env)
 }
 
 
+
+static float calc_scale(double gmmax)
+{
+    return static_cast<float>(255.0 / std::min(std::max(gmmax, 1.0), 255.0));
+}
+
+
 static AVSValue __cdecl
 create_tcannymod(AVSValue args, void* user_data, ise_t* env)
 {
@@ -356,8 +363,7 @@ create_tcannymod(AVSValue args, void* user_data, ise_t* env)
         env->ThrowError("TCannyMod: chroma must be set to 0, 1, 2, 3 or 4.");
     }
 
-    float scale = static_cast<float>(
-        255.0 / std::min(std::max(args[7].AsFloat(255.0), 1.0), 255.0));
+    float scale = calc_scale(args[7].AsFloat(255.0));
 
     return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
                        args[5].AsBool(false), scale, args[8].AsInt(HAS_AVX2),
@@ -366,7 +372,7 @@ create_tcannymod(AVSValue args, void* user_data, ise_t* env)
 
 
 static AVSValue __cdecl
-create_gblur(AVSValue args, void* user_data, IScriptEnvironment* env)
+create_gblur(AVSValue args, void* user_data, ise_t* env)
 {
     if (!has_sse2()) {
         env->ThrowError("GBlur: This filter requires SSE2.");
@@ -385,11 +391,33 @@ create_gblur(AVSValue args, void* user_data, IScriptEnvironment* env)
 }
 
 
+static AVSValue __cdecl
+create_emask(AVSValue args, void* user_data, ise_t* env)
+{
+    if (!has_sse2()) {
+        env->ThrowError("EMask: This filter requires SSE2.");
+    }
+    float sigma = (float)args[1].AsFloat(1.5);
+    if (sigma < 0.0f) {
+        env->ThrowError("EMask: sigma must be greater than zero.");
+    }
+    int chroma = args[2].AsInt(1);
+    if (chroma < 0 || chroma > 4) {
+        env->ThrowError("EMask: chroma must be set to 0, 1, 2, 3 or 4.");
+    }
+    float scale = calc_scale(args[2].AsFloat(50.0));
+
+    return new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
+                       args[5].AsBool(false), scale, args[3].AsInt(HAS_AVX2),
+                       "EMask", env);
+}
+
+
 static const AVS_Linkage* AVS_linkage = nullptr;
 
 
 extern "C" __declspec(dllexport) const char * __stdcall
-AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors)
+AvisynthPluginInit3(ise_t* env, const AVS_Linkage* const vectors)
 {
     AVS_linkage = vectors;
     env->AddFunction("TCannyMod",
@@ -402,6 +430,9 @@ AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors)
              /*6*/   "[chroma]i"
              /*7*/   "[gmmax]f"
              /*8*/   "[opt]i", create_tcannymod, nullptr);
-    env->AddFunction("GBlur", "c[sigma]f[chroma]i[opt]i", create_gblur, nullptr);
+    env->AddFunction("GBlur", "c[sigma]f[chroma]i[opt]i",
+                     create_gblur, nullptr);
+    env->AddFunction("EMask", "c[sigma]f[gmmax]f[chroma]i[sobel]b[opt]i",
+                     create_emask, nullptr);
     return "Canny edge detection filter for Avisynth2.6 ver." TCANNY_M_VERSION;
 }

@@ -113,6 +113,10 @@ Changelog:
         - Change direction values from 1,3,7,15 to 31,63,127,255.
         - Reduce waste processes.
 
+    1.1.0 (20160327):
+        - Implement simd non-maximum-suppression.
+        - a bit optimized gaussian-blur/ hysteresis.
+
 Source code:
 
     https://github.com/chikuzen/TCannyMod/

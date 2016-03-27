@@ -33,13 +33,11 @@
 
 static gaussian_blur_t get_gaussian_blur(arch_t arch)
 {
-    switch (arch) {
-    case HAS_SSE2:
+    if (arch == HAS_SSE2) {
         return gaussian_blur<__m128, GB_MAX_LENGTH, HAS_SSE2>;
-    case HAS_SSE41:
+    }
+    if (arch == HAS_SSE41) {
         return gaussian_blur<__m128, GB_MAX_LENGTH, HAS_SSE41>;
-    default:
-        break;
     }
     return gaussian_blur<__m256, GB_MAX_LENGTH, HAS_AVX2>;
 }
@@ -51,10 +49,10 @@ get_edge_detection(bool use_sobel, bool calc_dir, arch_t arch)
     using std::make_tuple;
     std::map<std::tuple<bool, bool, arch_t>, edge_detection_t> func;
 
-    func[make_tuple(false, false, HAS_SSE2)] = standerd<__m128, __m128i, false>;
-    func[make_tuple(false, false, HAS_AVX2)] = standerd<__m256, __m256i, false>;
-    func[make_tuple(false, true, HAS_SSE2)] = standerd<__m128, __m128i, true>;
-    func[make_tuple(false, true, HAS_AVX2)] = standerd<__m256, __m256i, true>;
+    func[make_tuple(false, false, HAS_SSE2)] = standard<__m128, __m128i, false>;
+    func[make_tuple(false, false, HAS_AVX2)] = standard<__m256, __m256i, false>;
+    func[make_tuple(false, true, HAS_SSE2)] = standard<__m128, __m128i, true>;
+    func[make_tuple(false, true, HAS_AVX2)] = standard<__m256, __m256i, true>;
 
     func[make_tuple(true, false, HAS_SSE2)] = sobel<__m128, __m128i, false>;
     func[make_tuple(true, false, HAS_AVX2)] = sobel<__m256, __m256i, false>;
@@ -65,6 +63,17 @@ get_edge_detection(bool use_sobel, bool calc_dir, arch_t arch)
 
     return func[make_tuple(use_sobel, calc_dir, a)];
 }
+
+
+static non_max_suppress_t
+get_non_max_suppress(arch_t arch)
+{
+    if (arch < HAS_AVX2) {
+        return non_max_suppress<__m128, __m128i>;
+    }
+    return non_max_suppress<__m256, __m256i>;
+}
+
 
 static write_gradient_mask_t get_write_gradient_mask(bool scale, arch_t arch)
 {
@@ -77,12 +86,21 @@ static write_gradient_mask_t get_write_gradient_mask(bool scale, arch_t arch)
 }
 
 
-static write_direction_map_t get_write_direction_map(arch_t arch)
+static write_gradient_direction_t get_write_gradient_direction(arch_t arch)
 {
     if (arch < HAS_AVX2) {
-        return write_direction_map<__m128, __m128i>;
+        return write_gradient_direction<__m128i>;
     }
-    return write_direction_map<__m256, __m256i>;
+    return write_gradient_direction<__m256i>;
+}
+
+
+static write_edge_direction_t get_write_edge_direction(arch_t arch)
+{
+    if (arch < HAS_AVX2) {
+        return write_edge_direction<__m128i>;
+    }
+    return write_edge_direction<__m256i>;
 }
 
 
@@ -98,7 +116,7 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
 
     float sum = 0.0f;
     for (int i = -radius; i <= radius; i++) {
-        float weight = expf((-1 * i * i) / (2.0f * sigma * sigma));
+        float weight = std::exp((-1 * i * i) / (2.0f * sigma * sigma));
         kernel[i + radius] = weight;
         sum += weight;
     }
@@ -123,6 +141,7 @@ static arch_t get_arch(int opt)
 #endif
 }
 
+
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
                  bool sobel, float s, int opt, const char* n, ise_t* env) :
     GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin), th_max(tmax),
@@ -138,35 +157,66 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
 
     numPlanes = (vi.IsY8() || chroma == 0) ? 1 : 3;
 
+    arch_t arch = get_arch(opt);
+    align = (arch < HAS_AVX2) ? 16 : 32;
+
     if (sigma > 0.0f) {
         set_gb_kernel(sigma, gbRadius, gbKernel);
         if (gbRadius == 0) {
             env->ThrowError("%s: sigma is too large.", name);
         }
+        size_t length = (gbRadius * 2 + 1);
+        horizontalKernel = static_cast<float*>(
+            _aligned_malloc(length * align, align));
+        if (!horizontalKernel) {
+            env->ThrowError("%s: failed to prepare kernel.", name);
+        }
+        size_t step = align / sizeof(float);
+        for (size_t i = 0; i < length; ++i) {
+            for (size_t j = 0; j < step; ++j) {
+                horizontalKernel[i * step + j] = gbKernel[i];
+            }
+        }
+
     }
-
-    arch_t arch = get_arch(opt);
-
-    align = (arch < HAS_AVX2) ? 16 : 32;
 
     blurPitch = ((align + (vi.width + 1) * sizeof(float)) + align - 1) & ~(align - 1);
     emaskPitch = (vi.width * sizeof(float) + align - 1) & ~(align - 1);
-    dirHystPitch = (vi.width + align - 1) & ~(align - 1);
+    dirPitch = (vi.width * sizeof(int32_t) + align - 1) & ~(align - 1);
+    hystPitch = (vi.width + align - 1) & ~(align - 1);
 
     buffSize = ((8 + vi.width + 8) * sizeof(float) + align - 1) & ~(align - 1);
     blurSize = blurPitch * (vi.height + 1);
     emaskSize = mode == 4 ? 0 : emaskPitch * (vi.height + 1);
-    dirSize = (mode == 1 || mode == 4) ? 0 : dirHystPitch * (vi.height + 1);
-    hystSize = (mode == 0 || mode == 2) ? dirHystPitch * vi.height : 0;
+    dirSize = (mode == 1 || mode == 4) ? 0 : dirPitch * (vi.height + 1);
+    hystSize = (mode == 0 || mode == 2) ? hystPitch * vi.height : 0;
 
     blurPitch /= sizeof(float);
     emaskPitch /= sizeof(float);
+    dirPitch /= sizeof(int32_t);
 
     gaussianBlur = get_gaussian_blur(arch);
+
     edgeDetection = get_edge_detection(sobel, (mode != 1 && mode != 4), arch);
+
+    nonMaximumSuppression = get_non_max_suppress(arch);//  non_max_suppress_c;
+
     writeBluredFrame = get_write_gradient_mask(false, arch);
+
     writeGradientMask = get_write_gradient_mask(scale != 1.0f, arch);
-    writeDirectionMap = get_write_direction_map(arch);
+
+    writeGradientDirection = get_write_gradient_direction(arch);
+
+    writeEdgeDirection = get_write_edge_direction(arch);
+}
+
+
+TCannyM::~TCannyM()
+{
+    if (horizontalKernel) {
+        _aligned_free(horizontalKernel);
+        horizontalKernel = nullptr;
+    }
 }
 
 
@@ -176,20 +226,20 @@ public:
     float* buffp;
     float* blurp;
     float* emaskp;
-    uint8_t* dirp;
+    int32_t* dirp;
     uint8_t* hystp;
     Buffers(size_t bufsize, size_t blsize, size_t emsize, size_t dirsize,
             size_t hystsize, size_t align, ise_t* env, const char* name) {
-        size_t all_size = bufsize + blsize + emsize + dirsize + hystsize;
-        orig = static_cast<uint8_t*>(_aligned_malloc(all_size, align));
+        size_t total_size = bufsize + blsize + emsize + dirsize + hystsize;
+        orig = static_cast<uint8_t*>(_aligned_malloc(total_size, align));
         if (!orig) {
             env->ThrowError("%s: failed to alocate buffers.", name);
         }
         buffp = reinterpret_cast<float*>(orig) + 8;
         blurp = reinterpret_cast<float*>(orig + bufsize + align);
         emaskp = reinterpret_cast<float*>(orig + bufsize + blsize);
-        dirp = orig + bufsize + blsize + emsize;
-        hystp = dirp + dirsize;
+        dirp = reinterpret_cast<int32_t*>(orig + bufsize + blsize + emsize);
+        hystp = orig + total_size - hystsize;
     };
     ~Buffers() {
         if (orig) {
@@ -234,8 +284,8 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, IScriptEnvironment* env)
             env->ThrowError("%s: Invalid memory alignment", name);
         }
 
-        gaussianBlur(gbRadius, gbKernel, b.buffp, b.blurp, blurPitch, srcp,
-                     src_pitch, width, height);
+        gaussianBlur(gbRadius, gbKernel, horizontalKernel, b.buffp, b.blurp,
+                     blurPitch, srcp, src_pitch, width, height);
         if (mode == 4) {
             writeBluredFrame(b.blurp, dstp, width, height, dst_pitch,
                              blurPitch, 1.0);
@@ -243,7 +293,7 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, IScriptEnvironment* env)
         }
 
         edgeDetection(b.blurp, blurPitch, b.emaskp, emaskPitch, b.dirp,
-                      dirHystPitch, width, height);
+                      dirPitch, width, height);
 
         if (mode == 1) {
             writeGradientMask(b.emaskp, dstp, width, height, dst_pitch,
@@ -251,23 +301,24 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, IScriptEnvironment* env)
             continue;
         }
         if (mode == 3) {
-            env->BitBlt(dstp, dst_pitch, b.dirp, dirHystPitch, width, height);
+            writeGradientDirection(b.dirp, dstp, dirPitch, dst_pitch, width,
+                                   height);
             continue;
         }
 
-        non_max_suppress(b.emaskp, emaskPitch, b.dirp, dirHystPitch, b.blurp,
-                         blurPitch, width, height);
+        nonMaximumSuppression(b.emaskp, emaskPitch, b.dirp, dirPitch, b.blurp,
+                              blurPitch, width, height);
 
-        hysteresis(b.hystp, dirHystPitch, b.blurp, blurPitch, width, height,
+        hysteresis(b.hystp, hystPitch, b.blurp, blurPitch, width, height,
                    th_min, th_max);
 
         if (mode == 2) {
-            writeDirectionMap(b.hystp, b.dirp, dirHystPitch, dstp,
-                              dst_pitch, width, height);
+            writeEdgeDirection(b.dirp, b.hystp, dstp, dirPitch, hystPitch,
+                               dst_pitch, width, height);
             continue;
         }
 
-        env->BitBlt(dstp, dst_pitch, b.hystp, dirHystPitch, width, height);
+        env->BitBlt(dstp, dst_pitch, b.hystp, hystPitch, width, height);
     }
 
     return dst;

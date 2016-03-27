@@ -38,7 +38,7 @@
 #include "write_frame.h"
 
 
-#define TCANNY_M_VERSION "1.0.0"
+#define TCANNY_M_VERSION "1.1.0"
 
 constexpr size_t GB_MAX_LENGTH = 17;
 
@@ -57,9 +57,11 @@ class TCannyM : public GenericVideoFilter {
     bool calc_dir;
     int gbRadius; // max: 8
     float gbKernel[GB_MAX_LENGTH];
+    float* horizontalKernel;
     size_t blurPitch;
     size_t emaskPitch;
-    size_t dirHystPitch;
+    size_t dirPitch;
+    size_t hystPitch;
     size_t buffSize;
     size_t blurSize;
     size_t emaskSize;
@@ -68,15 +70,17 @@ class TCannyM : public GenericVideoFilter {
 
     gaussian_blur_t gaussianBlur;
     edge_detection_t edgeDetection;
+    non_max_suppress_t nonMaximumSuppression;
     write_gradient_mask_t writeBluredFrame;
     write_gradient_mask_t writeGradientMask;
-    write_direction_map_t writeDirectionMap;
+    write_gradient_direction_t writeGradientDirection;
+    write_edge_direction_t writeEdgeDirection;
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
             int chroma, bool sobel, float scale, int opt, const char* name,
             ise_t* env);
-    ~TCannyM() {}
+    ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, ise_t* env);
 };
 

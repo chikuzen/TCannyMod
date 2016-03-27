@@ -96,6 +96,20 @@ SFINLINE __m256i load(const uint8_t* p)
     return _mm256_load_si256(reinterpret_cast<const __m256i*>(p));
 }
 
+template <typename T>
+T load(const int32_t*);
+
+template <>
+SFINLINE __m128i load(const int32_t* p)
+{
+    return _mm_load_si128(reinterpret_cast<const __m128i*>(p));
+}
+
+template <>
+SFINLINE __m256i load(const int32_t* p)
+{
+    return _mm256_load_si256(reinterpret_cast<const __m256i*>(p));
+}
 
 template <typename T>
 T loadu(const float* p);
@@ -127,6 +141,21 @@ SFINLINE __m256i loadu<__m256i>(const uint8_t* p)
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
 }
 
+template <typename T>
+T loadu(const int32_t* p);
+
+template <>
+SFINLINE __m128i loadu<__m128i>(const int32_t* p)
+{
+    return _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+}
+
+template <>
+SFINLINE __m256i loadu<__m256i>(const int32_t* p)
+{
+    return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+}
+
 SFINLINE __m128i cvtps_i32(const __m128& x)
 {
     return _mm_cvtps_epi32(x);
@@ -136,6 +165,39 @@ SFINLINE __m256i cvtps_i32(const __m256& x)
 {
     return _mm256_cvtps_epi32(x);
 }
+
+//template <typename T, arch_t ARCH>
+//T cvtu8_i32(const uint8_t* ptr);
+//
+//template <>
+//SFINLINE __m128i cvtu8_i32<__m128i, HAS_SSE2>(const uint8_t* ptr)
+//{
+//    const int32_t* p32 = reinterpret_cast<const int32_t*>(ptr);
+//    __m128i t = _mm_cvtsi32_si128(p32[0]);
+//    __m128i z = zero<__m128i>();
+//    t = _mm_unpacklo_epi8(t, z);
+//    return _mm_unpacklo_epi16(t, z);
+//}
+//
+//template <>
+//SFINLINE __m128i cvtu8_i32<__m128i, HAS_SSE41>(const uint8_t* ptr)
+//{
+//    const int32_t* p32 = reinterpret_cast<const int32_t*>(ptr);
+//    __m128i t = _mm_cvtsi32_si128(p32[0]);
+//    return _mm_cvtepu8_epi32(t);
+//}
+//
+//template <>
+//SFINLINE __m256i cvtu8_i32<__m256i, HAS_AVX2>(const uint8_t* ptr)
+//{
+//    const int64_t* p64 = reinterpret_cast<const int64_t*>(ptr);
+//#if defined(__WIN64)
+//    __m128i t0 = _mm_cvtsi64_si128(p64[0]);
+//#else
+//    __m128i t0 = _mm_set1_epi64x(p64[0]);
+//#endif
+//    return _mm256_cvtepu8_epi32(t0);
+//}
 
 template <typename T, arch_t ARCH>
 T cvt_to_float(const uint8_t* ptr);
@@ -163,12 +225,7 @@ SFINLINE __m128 cvt_to_float<__m128, HAS_SSE41>(const uint8_t* ptr)
 template <>
 SFINLINE __m256 cvt_to_float<__m256, HAS_AVX2>(const uint8_t* ptr)
 {
-    const int64_t* p64 = reinterpret_cast<const int64_t*>(ptr);
-#if defined(__WIN64)
-    __m128i t0 = _mm_cvtsi64_si128(p64[0]);
-#else
-    __m128i t0 = _mm_set1_epi64x(p64[0]);
-#endif
+    __m128i t0 = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(ptr));
     __m256i t1 = _mm256_cvtepu8_epi32(t0);
     return _mm256_cvtepi32_ps(t1);
 }
@@ -225,6 +282,21 @@ template <>
 SFINLINE __m256 set1_ps<__m256>(const float& x)
 {
     return _mm256_set1_ps(x);
+}
+
+template <typename T>
+T set1_i8(const int8_t&);
+
+template <>
+SFINLINE __m128i set1_i8<__m128i>(const int8_t& x)
+{
+    return _mm_set1_epi8(x);
+}
+
+template <>
+SFINLINE __m256i set1_i8<__m256i>(const int8_t& x)
+{
+    return _mm256_set1_epi8(x);
 }
 
 SFINLINE __m128 and_ps(const __m128& x, const __m128& y)
@@ -374,6 +446,21 @@ SFINLINE void store_ps<__m256>(float* p, const __m256& x)
 }
 
 template <typename T>
+void storeu_ps(float* p, const T& x) {}
+
+template <>
+SFINLINE void storeu_ps<__m128>(float* p, const __m128& x)
+{
+    _mm_storeu_ps(p, x);
+}
+
+template <>
+SFINLINE void storeu_ps<__m256>(float* p, const __m256& x)
+{
+    _mm256_storeu_ps(p, x);
+}
+
+template <typename T>
 void stream_ps(float* p, const T& x) {}
 
 template <>
@@ -403,6 +490,31 @@ SFINLINE void stream_si<__m256i>(uint8_t* p, const __m256i& x)
     return _mm256_stream_si256(reinterpret_cast<__m256i*>(p), x);
 }
 
+template <typename T>
+void stream_si(int32_t* p, const T& x) {}
+
+template <>
+SFINLINE void stream_si<__m128i>(int32_t* p, const __m128i& x)
+{
+    return _mm_stream_si128(reinterpret_cast<__m128i*>(p), x);
+}
+
+template <>
+SFINLINE void stream_si<__m256i>(int32_t* p, const __m256i& x)
+{
+    return _mm256_stream_si256(reinterpret_cast<__m256i*>(p), x);
+}
+
+SFINLINE __m128i cmpeq_i32(const __m128i& x, const __m128i& y)
+{
+    return _mm_cmpeq_epi32(x, y);
+}
+
+SFINLINE __m256i cmpeq_i32(const __m256i& x, const __m256i& y)
+{
+    return _mm256_cmpeq_epi32(x, y);
+}
+
 SFINLINE __m128i castps_si(const __m128& x)
 {
     return _mm_castps_si128(x);
@@ -411,6 +523,16 @@ SFINLINE __m128i castps_si(const __m128& x)
 SFINLINE __m256i castps_si(const __m256& x)
 {
     return _mm256_castps_si256(x);
+}
+
+SFINLINE __m128 castsi_ps(const __m128i& x)
+{
+    return _mm_castsi128_ps(x);
+}
+
+SFINLINE __m256 castsi_ps(const __m256i& x)
+{
+    return _mm256_castsi256_ps(x);
 }
 
 SFINLINE __m128 cmplt_ps(const __m128& x, const __m128& y)

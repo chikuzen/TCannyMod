@@ -24,15 +24,14 @@
 
 
 #include <algorithm>
-#include <utility>
 #include <vector>
 #include <cmath>
 #include <cfloat>
 #include "edge_detection.h"
 
 void __stdcall
-non_max_suppress(const float* emaskp, const size_t em_pitch,
-                 const uint8_t* dirp, const size_t dir_pitch,
+non_max_suppress_c(const float* emaskp, const size_t em_pitch,
+                 const int32_t* dirp, const size_t dir_pitch,
                  float* blurp, const size_t blr_pitch, const int width,
                  const int height)
 {
@@ -51,14 +50,14 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
         blurp[-1] = blurp[0] = -FLT_MAX;
         for (int x = 1; x < width - 1; ++x) {
             float p0;
-            if (dirp[x] == 31) {
-                p0 = max(emaskp[x + 1], emaskp[x - 1]);
-            } else if (dirp[x] == 63) {
-                p0 = max(emaskp[x + 1 - em_pitch], emaskp[x - 1 + em_pitch]);
+            if (dirp[x] == 255) {
+                p0 = max(emaskp[x - 1 - em_pitch], emaskp[x + 1 + em_pitch]);
             } else if (dirp[x] == 127) {
                 p0 = max(emaskp[x - em_pitch], emaskp[x + em_pitch]);
+            } else if (dirp[x] == 63) {
+                p0 = max(emaskp[x + 1 - em_pitch], emaskp[x - 1 + em_pitch]);
             } else {
-                p0 = max(emaskp[x - 1 - em_pitch], emaskp[x + 1 + em_pitch]);
+                p0 = max(emaskp[x + 1], emaskp[x - 1]);
             }
             if (emaskp[x] < p0) {
                 blurp[x] = -FLT_MAX;
@@ -73,22 +72,38 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
 }
 
 
+struct Pos {
+    int32_t x, y;
+    Pos(int32_t _x, int32_t _y) {
+        x = _x;
+        y = _y;
+    }
+};
+
+static __forceinline void
+hystfunc(const int32_t x, const int32_t y, float* edge, uint8_t* hyst,
+         const size_t epitch, const size_t hpitch, const float th,
+         std::vector<Pos>& stack)
+{
+    if (!hyst[x + y * hpitch] && edge[x + y * epitch] > th) {
+        edge[x + y * epitch] = FLT_MAX;
+        hyst[x + y * hpitch] = 0xFF;
+        stack.emplace_back(x, y);
+    }
+}
+
+
 void __stdcall
 hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,
            const size_t bpitch, const int width, const int height,
            const float tmin, const float tmax)
 {
-    struct Pos {
-        int32_t x, y;
-        Pos(int32_t _x, int32_t _y) { x = _x; y = _y; }
-    };
-
     memset(hystp, 0, hpitch * height);
     std::vector<Pos> stack;
 
     for (int32_t y = 0; y < height; ++y) {
         for (int32_t x = 0; x < width; ++x) {
-            if (blurp[x + y * bpitch] < tmax || hystp[x + y * hpitch] != 0) {
+            if (hystp[x + y * hpitch] || blurp[x + y * bpitch] < tmax) {
                 continue;
             }
             blurp[x + y * bpitch] = FLT_MAX;
@@ -102,24 +117,20 @@ hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,
                 int32_t xmax = std::min(pos.x + 1, width - 1);
                 int32_t ymin = std::max(pos.y - 1, 0);
                 int32_t ymax = std::min(pos.y + 1, height - 1);
-                for (int32_t yy = ymin; yy <= ymax; yy++) {
-                    int32_t xx = xmin;
-                    if (blurp[xx + yy * bpitch] > tmin && !hystp[xx + yy * hpitch]) {
-                        blurp[xx + yy * bpitch] = FLT_MAX;
-                        hystp[xx + yy * hpitch] = 0xFF;
-                        stack.emplace_back(xx, yy);
-                    }
-                    ++xx;
-                    if (blurp[xx + yy * bpitch] > tmin && !hystp[xx + yy * hpitch]) {
-                        blurp[xx + yy * bpitch] = FLT_MAX;
-                        hystp[xx + yy * hpitch] = 0xFF;
-                        stack.emplace_back(xx++, yy);
-                    }
-                    if (++xx > xmax) continue;
-                    if (blurp[xx + yy * bpitch] > tmin && !hystp[xx + yy * hpitch]) {
-                        blurp[xx + yy * bpitch] = FLT_MAX;
-                        hystp[xx + yy * hpitch] = 0xFF;
-                        stack.emplace_back(xx, yy);
+                hystfunc(xmin, ymin, blurp, hystp, bpitch, hpitch, tmin, stack);
+                hystfunc(xmin + 1, ymin, blurp, hystp, bpitch, hpitch, tmin, stack);
+                if (xmin + 2 == xmax) {
+                    hystfunc(xmax, ymin, blurp, hystp, bpitch, hpitch, tmin, stack);
+                }
+                hystfunc(xmin, ymin + 1, blurp, hystp, bpitch, hpitch, tmin, stack);
+                if (xmin + 2 == xmax) {
+                    hystfunc(xmax, ymin + 1, blurp, hystp, bpitch, hpitch, tmin, stack);
+                }
+                if (ymin + 2 == ymax) {
+                    hystfunc(xmin, ymax, blurp, hystp, bpitch, hpitch, tmin, stack);
+                    hystfunc(xmin + 1, ymax, blurp, hystp, bpitch, hpitch, tmin, stack);
+                    if (xmin + 2 == xmax) {
+                        hystfunc(xmax, ymax, blurp, hystp, bpitch, hpitch, tmin, stack);
                     }
                 }
             }

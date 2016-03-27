@@ -30,7 +30,7 @@
 #include "simd.h"
 
 template <typename Vf, typename Vi>
-SFINLINE void calc_direction(const Vf& gx, const Vf& gy, uint8_t* dirp)
+SFINLINE void calc_direction(const Vf& gx, const Vf& gy, int32_t* dirp)
 {
 
     static const Vf t0225 = set1_ps<Vf>(std::sqrt(2.0f) - 1.0f); // tan(pi/8)
@@ -70,14 +70,14 @@ SFINLINE void calc_direction(const Vf& gx, const Vf& gy, uint8_t* dirp)
 
     d0 = or_si(or_si(d0, d1), or_si(d2, d3));
 
-    cvt_and_output(d0, dirp);
+    stream_si<Vi>(dirp, d0);
 }
 
 
 template <typename Vf, typename Vi, bool CALC_DIR>
 void __stdcall
-standerd(float* blurp, const size_t blur_pitch, float* emaskp,
-         const size_t emask_pitch, uint8_t* dirp, const size_t dir_pitch,
+standard(float* blurp, const size_t blur_pitch, float* emaskp,
+         const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
          const size_t width, const size_t height)
 {
     constexpr size_t step = sizeof(Vf) / sizeof(float);
@@ -122,7 +122,7 @@ standerd(float* blurp, const size_t blur_pitch, float* emaskp,
 template <typename Vf, typename Vi, bool CALC_DIR>
 void __stdcall
 sobel(float* blurp, const size_t blur_pitch, float* emaskp,
-      const size_t emask_pitch, uint8_t* dirp, const size_t dir_pitch,
+      const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
       const size_t width, const size_t height)
 {
     constexpr size_t step = sizeof(Vf) / sizeof(float);
@@ -174,17 +174,72 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
 }
 
 
-using edge_detection_t = void(__stdcall *)(
-    float* blurp, const size_t blur_pitch, float* emaskp,
-    const size_t emask_pitch, uint8_t* dirp, const size_t dir_pitch,
-    const size_t width, const size_t height);
-
-
+template <typename Vf, typename Vi>
 void __stdcall
 non_max_suppress(const float* emaskp, const size_t em_pitch,
-                 const uint8_t* dirp, const size_t dir_pitch, float* blurp,
-                 const size_t blr_pitch, const int width, const int height);
+                 const int32_t* dirp, const size_t dir_pitch, float* blurp,
+                 const size_t blur_pitch, const size_t width, const size_t height)
+{
+    constexpr size_t step = sizeof(Vf) / sizeof(float);
 
+    static const Vf FLT_MAX_neg = set1_ps<Vf>(-FLT_MAX);
+
+    memset(blurp - 4, 0, blur_pitch * sizeof(float));
+    for (size_t y = 1; y < height - 1; ++y) {
+        memcpy(blurp + blur_pitch * y, emaskp + em_pitch * y,
+            width * sizeof(float));
+    }
+    blurp += blur_pitch;
+    emaskp += em_pitch;
+
+    for (size_t y = 1; y < height - 1; ++y) {
+        dirp += dir_pitch;
+        blurp[-1] = blurp[0] = -FLT_MAX;
+
+        for (size_t x = 1; x < width - 1; x += step) {
+            const Vi dir = loadu<Vi>(dirp + x);
+            const Vi m135 = srli_i32(cmpeq_i32(dir, dir), 24);
+            Vf mask = castsi_ps(cmpeq_i32(dir, m135));
+            Vf temp = max(loadu<Vf>(emaskp + x - 1 - em_pitch),
+                          loadu<Vf>(emaskp + x + 1 + em_pitch));
+            Vf p0 = and_ps(temp, mask);
+
+            mask = castsi_ps(cmpeq_i32(dir, srli_i32(m135, 1)));
+            temp = max(loadu<Vf>(emaskp + x - em_pitch),
+                       loadu<Vf>(emaskp + x + em_pitch));
+            p0 = or_ps(p0, and_ps(temp, mask));
+
+            mask = castsi_ps(cmpeq_i32(dir, srli_i32(m135, 2)));
+            temp = max(loadu<Vf>(emaskp + x + 1 - em_pitch),
+                       loadu<Vf>(emaskp + x - 1 + em_pitch));
+            p0 = or_ps(p0, and_ps(temp, mask));
+
+            mask = castsi_ps(cmpeq_i32(dir, srli_i32(m135, 3)));
+            temp = max(loadu<Vf>(emaskp + x - 1),
+                       loadu<Vf>(emaskp + x + 1));
+            p0 = or_ps(p0, and_ps(temp, mask));
+
+            mask = cmplt_ps(loadu<Vf>(emaskp + x), p0);
+
+            Vf blur = loadu<Vf>(blurp + x);
+            blur = blendv(blur, FLT_MAX_neg, mask);
+            storeu_ps(blurp + x, blur);
+        }
+        blurp[width - 1] = blurp[width] = -FLT_MAX;
+        emaskp += em_pitch;
+        blurp += blur_pitch;
+    }
+}
+
+using edge_detection_t = void(__stdcall *)(
+    float* blurp, const size_t blur_pitch, float* emaskp,
+    const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
+    const size_t width, const size_t height);
+
+using non_max_suppress_t = void (__stdcall *)(
+    const float* emaskp, const size_t em_pitch, const int32_t* dirp,
+    const size_t dir_pitch, float* blurp, const size_t blr_pitch,
+    const size_t width, const size_t height);
 
 void __stdcall
 hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,

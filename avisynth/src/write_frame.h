@@ -67,39 +67,72 @@ write_gradient_mask(const float* srcp, uint8_t* dstp, const size_t width,
 }
 
 
-template <typename Vf, typename Vi>
-void __stdcall
-write_direction_map(const uint8_t* hystp, const uint8_t* dirp,
-                    const size_t dir_pitch, uint8_t* dstp,
-                    const size_t dst_pitch, const size_t width,
-                    const size_t height)
+template <typename Vi>
+static void __stdcall
+write_gradient_direction(const int32_t* dirp, uint8_t* dstp,
+                         const size_t dir_pitch, const size_t dst_pitch,
+                         const size_t width, const size_t height)
 {
-    constexpr size_t step = sizeof(Vi);
+    constexpr size_t align = sizeof(Vi);
+    constexpr size_t step = align / sizeof(int32_t);
 
-    for (size_t y = 0; y < height; y++) {
-        for (size_t x = 0; x < width; x += step) {
-            Vi x0 = load<Vi>(hystp + x);
-            Vi x1 = load<Vi>(dirp + x);
-            x0 = and_si(x0, x1);
-            stream_si<Vi>(dstp + x, x0);
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; x += align) {
+            Vi x0 = load<Vi>(dirp + x + step * 0);
+            Vi x1 = load<Vi>(dirp + x + step * 1);
+            Vi x2 = load<Vi>(dirp + x + step * 2);
+            Vi x3 = load<Vi>(dirp + x + step * 3);
+            Vi dst = cvti32_u8(x0, x1, x2, x3);
+            stream_si<Vi>(dstp + x, dst);
         }
         dirp += dir_pitch;
-        hystp += dir_pitch;
+        dstp += dst_pitch;
+    }
+}
+
+template <typename Vi>
+void __stdcall
+write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
+                     const size_t dir_pitch, const size_t hyst_pitch,
+                     const size_t dst_pitch, const size_t width,
+                     const size_t height)
+{
+    constexpr size_t align = sizeof(Vi);
+    constexpr size_t step = align / sizeof(int32_t);
+
+    for (size_t y = 0; y < height; y++) {
+        for (size_t x = 0; x < width; x += align) {
+            const Vi x0 = load<Vi>(dirp + x + step * 0);
+            const Vi x1 = load<Vi>(dirp + x + step * 1);
+            const Vi x2 = load<Vi>(dirp + x + step * 2);
+            const Vi x3 = load<Vi>(dirp + x + step * 3);
+            const Vi dir = cvti32_u8(x0, x1, x2, x3);
+            const Vi hyst = load<Vi>(hystp + x);
+            const Vi dst = and_si(dir, hyst);
+            stream_si<Vi>(dstp + x, dst);
+        }
+        dirp += dir_pitch;
+        hystp += hyst_pitch;
         dstp += dst_pitch;
     }
 }
 
 
-using write_gradient_mask_t = void(_stdcall *)(
+using write_gradient_mask_t = void(__stdcall *)(
     const float* srcp, uint8_t* dstp, const size_t width,
     const size_t height, const size_t dst_pitch, const size_t src_pitch,
     const float scale);
 
 
-using write_direction_map_t = void (__stdcall *)(
-    const uint8_t* hystp, const uint8_t* dirp, const size_t dir_pitch,
-    uint8_t* dstp, const size_t dst_pitch, const size_t width,
-    const size_t height);
+using write_gradient_direction_t = void(__stdcall *)(
+    const int32_t* dirp, uint8_t* dstp, const size_t dir_pitch,
+    const size_t dst_pitch, const size_t width, const size_t height);
+
+
+using write_edge_direction_t = void (__stdcall *)(
+    const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
+    const size_t dir_pitch, const size_t hyst_pitch, const size_t dst_pitch,
+    const size_t width, const size_t height);
 
 
 #endif

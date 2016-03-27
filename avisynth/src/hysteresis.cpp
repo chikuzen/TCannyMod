@@ -29,48 +29,6 @@
 #include <cfloat>
 #include "edge_detection.h"
 
-void __stdcall
-non_max_suppress_c(const float* emaskp, const size_t em_pitch,
-                 const int32_t* dirp, const size_t dir_pitch,
-                 float* blurp, const size_t blr_pitch, const int width,
-                 const int height)
-{
-    using std::max;
-
-    memset(blurp - 4, 0, blr_pitch * sizeof(float));
-    for (int y = 1; y < height - 1; ++y) {
-        memcpy(blurp + blr_pitch * y, emaskp + em_pitch * y,
-               width * sizeof(float));
-    }
-    blurp += blr_pitch;
-    emaskp += em_pitch;
-
-    for (int y = 1; y < height - 1; ++y) {
-        dirp += dir_pitch;
-        blurp[-1] = blurp[0] = -FLT_MAX;
-        for (int x = 1; x < width - 1; ++x) {
-            float p0;
-            if (dirp[x] == 255) {
-                p0 = max(emaskp[x - 1 - em_pitch], emaskp[x + 1 + em_pitch]);
-            } else if (dirp[x] == 127) {
-                p0 = max(emaskp[x - em_pitch], emaskp[x + em_pitch]);
-            } else if (dirp[x] == 63) {
-                p0 = max(emaskp[x + 1 - em_pitch], emaskp[x - 1 + em_pitch]);
-            } else {
-                p0 = max(emaskp[x + 1], emaskp[x - 1]);
-            }
-            if (emaskp[x] < p0) {
-                blurp[x] = -FLT_MAX;
-            }
-        }
-        blurp[width - 1] = blurp[width] = -FLT_MAX;
-        emaskp += em_pitch;
-        blurp += blr_pitch;
-    }
-
-    memset(blurp - 4, 0, blr_pitch * sizeof(float));
-}
-
 
 struct Pos {
     int32_t x, y;

@@ -38,8 +38,8 @@ convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
 
     for (size_t y = 0; y < height; y++) {
         for (size_t x = 0; x < width; x += step) {
-            Vf val = cvt_to_float<Vf, ARCH>(srcp + x);
-            stream_ps<Vf>(blurp + x, val);
+            Vf val = cvtu8_ps<Vf, ARCH>(srcp + x);
+            stream<Vf>(blurp + x, val);
         }
         srcp += src_pitch;
         blurp += blur_pitch;
@@ -49,8 +49,8 @@ convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
 
 template <typename Vf>
 static void
-horizontal_blur(const float* hkernel, float* buffp, const int radius, const size_t width,
-                const float* kernel, float* blurp)
+horizontal_blur(const float* hkernel, float* buffp, const int radius,
+                const size_t width, const float* kernel, float* blurp)
 {
     constexpr size_t step = sizeof(Vf) / sizeof(float);
     const int length = radius * 2 + 1;
@@ -65,9 +65,9 @@ horizontal_blur(const float* hkernel, float* buffp, const int radius, const size
         for (int i = -radius; i <= radius; ++i) {
             Vf k = load<Vf>(hkernel + (i + radius) * step);
             Vf val = loadu<Vf>(buffp + x + i);
-            sum = madd_ps(k, val, sum);
+            sum = madd(k, val, sum);
         }
-        stream_ps<Vf>(blurp + x, sum);
+        stream<Vf>(blurp + x, sum);
     }
 }
 
@@ -101,12 +101,12 @@ gaussian_blur(const int radius, const float* kernel, const float* hkernel,
             Vf sum = zero<Vf>();
 
             for (int l = 0; l < length; ++l) {
-                Vf input = cvt_to_float<Vf, ARCH>(p[l] + x);
+                Vf input = cvtu8_ps<Vf, ARCH>(p[l] + x);
                 Vf k = set1_ps<Vf>(kernel[l]);
 
-                sum = madd_ps(k, input, sum);
+                sum = madd(k, input, sum);
             }
-            store_ps<Vf>(buffp + x, sum);
+            store<Vf>(buffp + x, sum);
         }
         horizontal_blur<Vf>(hkernel, buffp, radius, width, kernel,
                             blurp + blur_pitch * y);

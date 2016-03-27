@@ -35,18 +35,18 @@ SFINLINE void calc_direction(const Vf& gx, const Vf& gy, int32_t* dirp)
 
     static const Vf t0225 = set1_ps<Vf>(std::sqrt(2.0f) - 1.0f); // tan(pi/8)
     static const Vf t0675 = set1_ps<Vf>(std::sqrt(2.0f) + 1.0f); // tan(3*pi/8)
-    static const Vf t1125 = sub_ps(zero<Vf>(), t0675); // tan(5*pi/8) = -tan(3*pi/8)
-    static const Vf t1575 = sub_ps(zero<Vf>(), t0225); // tan(7*pi/8) = -tan(pi/8)
+    static const Vf t1125 = sub(zero<Vf>(), t0675); // tan(5*pi/8) = -tan(3*pi/8)
+    static const Vf t1575 = sub(zero<Vf>(), t0225); // tan(7*pi/8) = -tan(pi/8)
 
     Vf z = zero<Vf>();
     Vf vertical = set1_ps<Vf>(90.0f);
 
     // if gy < 0, gx = -gx
     Vf mask = cmplt_ps(gy, z);
-    Vf gx2 = blendv(gx, sub_ps(z, gx), mask);
+    Vf gx2 = blendv(gx, sub(z, gx), mask);
 
     // tan = gy / gx
-    Vf tan = mul_ps(rcp_hq_ps(gx2), abs_ps(gy));
+    Vf tan = mul(rcp_hq(gx2), abs(gy));
 
     // if tan is unorderd(inf or NaN), tan = 90.0f
     mask = cmpord_ps(tan, tan);
@@ -70,7 +70,7 @@ SFINLINE void calc_direction(const Vf& gx, const Vf& gy, int32_t* dirp)
 
     d0 = or_si(or_si(d0, d1), or_si(d2, d3));
 
-    stream_si<Vi>(dirp, d0);
+    stream<Vi>(dirp, d0);
 }
 
 
@@ -91,17 +91,17 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
         p1[width] = p1[width - 1];
 
         for (size_t x = 0; x < width; x += step) {
-            Vf gy = sub_ps(load<Vf>(p0 + x), load<Vf>(p2 + x)); // [1, 0, -1]
-            Vf gx = sub_ps(loadu<Vf>(p1 + x + 1), loadu<Vf>(p1 + x - 1)); // [-1, 0, 1]
+            Vf gy = sub(load<Vf>(p0 + x), load<Vf>(p2 + x)); // [1, 0, -1]
+            Vf gx = sub(loadu<Vf>(p1 + x + 1), loadu<Vf>(p1 + x - 1)); // [-1, 0, 1]
 
             if (CALC_DIR) {
                 calc_direction<Vf, Vi>(gx, gy, dirp + x);
             }
 
-            Vf magnitude = mul_ps(gx, gx);
-            magnitude = madd_ps(gy, gy, magnitude);
-            magnitude = sqrt_ps(magnitude);
-            stream_ps<Vf>(emaskp + x, magnitude);
+            Vf magnitude = mul(gx, gx);
+            magnitude = madd(gy, gy, magnitude);
+            magnitude = sqrt(magnitude);
+            stream<Vf>(emaskp + x, magnitude);
         }
         emaskp += emask_pitch;
         dirp += dir_pitch;
@@ -139,31 +139,31 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
         p2[width] = p2[width - 1];
 
         for (size_t x = 0; x < width; x += step) {
-            Vf gx = sub_ps(loadu<Vf>(p0 + x + 1), loadu<Vf>(p2 + x - 1));
+            Vf gx = sub(loadu<Vf>(p0 + x + 1), loadu<Vf>(p2 + x - 1));
             Vf gy = gx;
             Vf t = loadu<Vf>(p0 + x - 1);
-            gx = sub_ps(gx, t);
-            gy = add_ps(gy, t);
+            gx = sub(gx, t);
+            gy = add(gy, t);
             t = loadu<Vf>(p2 + x + 1);
-            gx = add_ps(gx, t);
-            gy = sub_ps(gy, t);
+            gx = add(gx, t);
+            gy = sub(gy, t);
             t = loadu<Vf>(p1 + x - 1);
-            gx = sub_ps(gx, add_ps(t, t));
+            gx = sub(gx, add(t, t));
             t = loadu<Vf>(p1 + x + 1);
-            gx = add_ps(gx, add_ps(t, t));
+            gx = add(gx, add(t, t));
             t = load<Vf>(p0 + x);
-            gy = add_ps(gy, add_ps(t, t));
+            gy = add(gy, add(t, t));
             t = load<Vf>(p2 + x);
-            gy = sub_ps(gy, add_ps(t, t));
+            gy = sub(gy, add(t, t));
 
             if (CALC_DIR) {
                 calc_direction<Vf, Vi>(gx, gy, dirp + x);
             }
 
-            Vf magnitude = mul_ps(gx, gx);
-            magnitude = madd_ps(gy, gy, magnitude);
-            magnitude = sqrt_ps(magnitude);
-            stream_ps<Vf>(emaskp + x, magnitude);
+            Vf magnitude = mul(gx, gx);
+            magnitude = madd(gy, gy, magnitude);
+            magnitude = sqrt(magnitude);
+            stream<Vf>(emaskp + x, magnitude);
         }
         emaskp += emask_pitch;
         dirp += dir_pitch;
@@ -223,7 +223,7 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
 
             Vf blur = loadu<Vf>(blurp + x);
             blur = blendv(blur, FLT_MAX_neg, mask);
-            storeu_ps(blurp + x, blur);
+            storeu(blurp + x, blur);
         }
         blurp[width - 1] = blurp[width] = -FLT_MAX;
         emaskp += em_pitch;
@@ -231,15 +231,18 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
     }
 }
 
+
 using edge_detection_t = void(__stdcall *)(
     float* blurp, const size_t blur_pitch, float* emaskp,
     const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
     const size_t width, const size_t height);
 
+
 using non_max_suppress_t = void (__stdcall *)(
     const float* emaskp, const size_t em_pitch, const int32_t* dirp,
     const size_t dir_pitch, float* blurp, const size_t blr_pitch,
     const size_t width, const size_t height);
+
 
 void __stdcall
 hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,

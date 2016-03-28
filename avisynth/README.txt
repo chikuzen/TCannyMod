@@ -81,7 +81,7 @@ Syntax:
 
         sigma - same as TCannyMod. (default = 0.5)
 
-        chroma - same as TCannyMod. (default = 1)
+        chroma - same as TCannyMod. (default = 0)
 
         opt - same as TCannyMod. (default = automated)
 
@@ -116,7 +116,7 @@ Note:
       Thus, if you want to crop the left side of your source clip before this filter,
       you have to set crop(align=true).
 
-    - Probabry, this filter work with Avisynth+'s "MT_NICE_FILTER" mode.(from v1.0.0)
+    - Probabry, this filter is able to work on Avisynth+'s "MT_NICE_FILTER" mode.(from v1.0.0)
 
     - TCannyMod_avx.dll is compiled with /arch:AVX.
 

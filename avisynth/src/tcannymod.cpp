@@ -401,7 +401,7 @@ create_emask(AVSValue args, void* user_data, ise_t* env)
     if (sigma < 0.0f) {
         env->ThrowError("EMask: sigma must be greater than zero.");
     }
-    int chroma = args[2].AsInt(1);
+    int chroma = args[2].AsInt(0);
     if (chroma < 0 || chroma > 4) {
         env->ThrowError("EMask: chroma must be set to 0, 1, 2, 3 or 4.");
     }

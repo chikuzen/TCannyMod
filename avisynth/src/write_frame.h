@@ -119,22 +119,5 @@ write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
 }
 
 
-using write_gradient_mask_t = void(__stdcall *)(
-    const float* srcp, uint8_t* dstp, const size_t width,
-    const size_t height, const size_t dst_pitch, const size_t src_pitch,
-    const float scale);
-
-
-using write_gradient_direction_t = void(__stdcall *)(
-    const int32_t* dirp, uint8_t* dstp, const size_t dir_pitch,
-    const size_t dst_pitch, const size_t width, const size_t height);
-
-
-using write_edge_direction_t = void (__stdcall *)(
-    const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
-    const size_t dir_pitch, const size_t hyst_pitch, const size_t dst_pitch,
-    const size_t width, const size_t height);
-
-
 #endif
 

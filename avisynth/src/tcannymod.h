@@ -33,16 +33,47 @@
 #endif
 #include <windows.h>
 #include <avisynth.h>
-#include "gaussian_blur.h"
-#include "edge_detection.h"
-#include "write_frame.h"
-
 
 #define TCANNY_M_VERSION "1.1.1"
 
 constexpr size_t GB_MAX_LENGTH = 17;
 
 typedef IScriptEnvironment ise_t;
+
+
+using gaussian_blur_t = void(__stdcall *)(
+    const int radius, const float* kernel, const float* hkernel, float* buffp,
+    float* blurp, const size_t blur_pitch, const uint8_t* srcp,
+    const size_t src_pitch, const size_t width, const size_t height);
+
+
+using edge_detection_t = void(__stdcall *)(
+    float* blurp, const size_t blur_pitch, float* emaskp,
+    const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
+    const size_t width, const size_t height);
+
+
+using non_max_suppress_t = void (__stdcall *)(
+    const float* emaskp, const size_t em_pitch, const int32_t* dirp,
+    const size_t dir_pitch, float* blurp, const size_t blr_pitch,
+    const size_t width, const size_t height);
+
+
+using write_gradient_mask_t = void(__stdcall *)(
+    const float* srcp, uint8_t* dstp, const size_t width,
+    const size_t height, const size_t dst_pitch, const size_t src_pitch,
+    const float scale);
+
+
+using write_gradient_direction_t = void(__stdcall *)(
+    const int32_t* dirp, uint8_t* dstp, const size_t dir_pitch,
+    const size_t dst_pitch, const size_t width, const size_t height);
+
+
+using write_edge_direction_t = void (__stdcall *)(
+    const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
+    const size_t dir_pitch, const size_t hyst_pitch, const size_t dst_pitch,
+    const size_t width, const size_t height);
 
 
 class TCannyM : public GenericVideoFilter {
@@ -78,8 +109,7 @@ class TCannyM : public GenericVideoFilter {
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
-            int chroma, bool sobel, float scale, int opt, const char* name,
-            ise_t* env);
+            int chroma, bool sobel, float scale, int opt, const char* name);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, ise_t* env);
 };

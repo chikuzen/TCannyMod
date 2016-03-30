@@ -123,10 +123,5 @@ gaussian_blur(const int radius, const float* kernel, const float* hkernel,
 }
 
 
-using gaussian_blur_t = void(__stdcall *)(
-    const int radius, const float* kernel, const float* hkernel, float* buffp,
-    float* blurp, const size_t blur_pitch, const uint8_t* srcp,
-    const size_t src_pitch, const size_t width, const size_t height);
-
 #endif
 

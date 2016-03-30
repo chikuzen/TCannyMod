@@ -29,6 +29,9 @@
 #include <map>
 #include <tuple>
 #include "tcannymod.h"
+#include "gaussian_blur.h"
+#include "edge_detection.h"
+#include "write_frame.h"
 
 
 static gaussian_blur_t get_gaussian_blur(arch_t arch)
@@ -136,18 +139,18 @@ static arch_t get_arch(int opt)
 }
 
 
+static inline void validate(bool cond, const char* msg)
+{
+    if (cond)
+        throw msg;
+}
+
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
-                 bool sobel, float s, int opt, const char* n, ise_t* env) :
+                 bool sobel, float s, int opt, const char* n) :
     GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin), th_max(tmax),
     chroma(c), name(n), scale(s)
 {
-    if (!vi.IsPlanar()) {
-        env->ThrowError("%s: Planar format only.", name);
-    }
-
-    if (vi.width > 65535 || vi.height > 65535) {
-        env->ThrowError("%s: width/height must be smaller than 65536.", name);
-    }
+    validate(!vi.IsPlanar(), "Planar format only.");
 
     numPlanes = (vi.IsY8() || chroma == 0) ? 1 : 3;
 
@@ -156,15 +159,13 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
 
     if (sigma > 0.0f) {
         set_gb_kernel(sigma, gbRadius, gbKernel);
-        if (gbRadius == 0) {
-            env->ThrowError("%s: sigma is too large.", name);
-        }
+        validate(gbRadius == 0, "sigma is too large.");
+
         size_t length = (gbRadius * 2 + 1);
         horizontalKernel = static_cast<float*>(
             _aligned_malloc(length * align, align));
-        if (!horizontalKernel) {
-            env->ThrowError("%s: failed to prepare kernel.", name);
-        }
+        validate(!horizontalKernel, "failed to prepare kernel.");
+
         size_t step = align / sizeof(float);
         for (size_t i = 0; i < length; ++i) {
             for (size_t j = 0; j < step; ++j) {
@@ -223,19 +224,19 @@ public:
     int32_t* dirp;
     uint8_t* hystp;
     Buffers(size_t bufsize, size_t blsize, size_t emsize, size_t dirsize,
-            size_t hystsize, size_t align, ise_t* env, const char* name) {
+            size_t hystsize, size_t align)
+    {
         size_t total_size = bufsize + blsize + emsize + dirsize + hystsize;
         orig = static_cast<uint8_t*>(_aligned_malloc(total_size, align));
-        if (!orig) {
-            env->ThrowError("%s: failed to alocate buffers.", name);
-        }
+        validate(!orig, "failed to allocate buffers.");
         buffp = reinterpret_cast<float*>(orig) + 8;
         blurp = reinterpret_cast<float*>(orig + bufsize + align);
         emaskp = reinterpret_cast<float*>(orig + bufsize + blsize);
         dirp = reinterpret_cast<int32_t*>(orig + bufsize + blsize + emsize);
         hystp = orig + total_size - hystsize;
     };
-    ~Buffers() {
+    ~Buffers()
+    {
         if (orig) {
             _aligned_free(orig);
             orig = nullptr;
@@ -249,10 +250,10 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
     PVideoFrame src = child->GetFrame(n, env);
     PVideoFrame dst = env->NewVideoFrame(vi, align);
 
-    auto b = Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize, align,
-                     env, name);
+try {
+    auto b = Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize, align);
 
-    const int planes[] = {PLANAR_Y, PLANAR_U, PLANAR_V};
+    const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
 
     for (int i = 0; i < numPlanes; i++) {
 
@@ -275,7 +276,8 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 
         if ((reinterpret_cast<uintptr_t>(srcp) & (align - 1)) ||
                 (src_pitch | dst_pitch) & (align - 1)) {
-            env->ThrowError("%s: Invalid memory alignment", name);
+            b.~Buffers();
+            throw "Invalid memory alignment.";
         }
 
         gaussianBlur(gbRadius, gbKernel, horizontalKernel, b.buffp, b.blurp,
@@ -314,6 +316,9 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 
         env->BitBlt(dstp, dst_pitch, b.hystp, hystPitch, width, height);
     }
+} catch (const char* e) {
+    env->ThrowError("%s: %s", name, e);
+}
 
     return dst;
 }
@@ -329,81 +334,82 @@ static float calc_scale(double gmmax)
 static AVSValue __cdecl
 create_tcannymod(AVSValue args, void* user_data, ise_t* env)
 {
-    if (!has_sse2()) {
-        env->ThrowError("TCannyMod: This filter requires SSE2.");
-    }
+    TCannyM* f;
+try {
+    validate(!has_sse2(), "This filter requires SSE2.");
+
     int mode = args[1].AsInt(0);
-    if (mode < 0 || mode > 4) {
-        env->ThrowError("TCannyMod: mode must be between 0 and 4.");
-    }
+    validate(mode < 0 || mode > 4, "mode must be between 0 and 4.");
 
     float sigma = static_cast<float>(args[2].AsFloat(1.5f));
-    if (sigma < 0.0f) {
-        env->ThrowError("TCannyMod: sigma must be greater than zero.");
-    }
+    validate(sigma < 0.0f, "sigma must be greater than zero.");
 
     float tmin = static_cast<float>(args[4].AsFloat(0.1f));
-    if (tmin < 0.0f) {
-        env->ThrowError("TCannyMod: t_l must be greater than zero.");
-    }
+    validate(tmin < 0.0f, "t_l must be greater than zero.");
 
     float tmax = static_cast<float>(args[3].AsFloat(8.0f));
-    if (tmax < tmin) {
-        env->ThrowError("TCannyMod: t_h must be greater than t_l.");
-    }
+    validate(tmax < tmin, "t_h must be greater than t_l.");
 
     int chroma = args[6].AsInt(0);
-    if (chroma < 0 || chroma > 4) {
-        env->ThrowError("TCannyMod: chroma must be set to 0, 1, 2, 3 or 4.");
-    }
+    validate(chroma < 0 || chroma > 4, "chroma must be set to 0, 1, 2, 3 or 4.");
 
     float scale = calc_scale(args[7].AsFloat(255.0));
 
-    return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
-                       args[5].AsBool(false), scale, args[8].AsInt(HAS_AVX2),
-                       "TCannyMod", env);
+    f = new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
+                    args[5].AsBool(false), scale, args[8].AsInt(HAS_AVX2),
+                    "TCannyMod");
+} catch (const char* e) {
+    env->ThrowError("TCannyMod: %s", e);
+}
+    return f;
 }
 
 
 static AVSValue __cdecl
 create_gblur(AVSValue args, void* user_data, ise_t* env)
 {
-    if (!has_sse2()) {
-        env->ThrowError("GBlur: This filter requires SSE2.");
-    }
-    float sigma = (float)args[1].AsFloat(0.5);
-    if (sigma < 0.0f) {
-        env->ThrowError("GBlur: sigma must be greater than zero.");
-    }
-    int chroma = args[2].AsInt(1);
-    if (chroma < 0 || chroma > 4) {
-        env->ThrowError("GBlur: chroma must be set to 0, 1, 2, 3 or 4.");
-    }
+    TCannyM* f;
+try {
+    validate(!has_sse2(), "This filter requires SSE2.");
 
-    return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma, false,
-                       1.0f, args[3].AsInt(HAS_AVX2), "GBlur", env);
+    float sigma = (float)args[1].AsFloat(0.5);
+    validate(sigma < 0.0f, "sigma must be greater than zero.");
+
+    int chroma = args[2].AsInt(1);
+    validate(chroma < 0 || chroma > 4, "chroma must be set to 0, 1, 2, 3 or 4.");
+
+    f = new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma, false,
+                    1.0f, args[3].AsInt(HAS_AVX2), "GBlur");
+} catch (const char* e) {
+    env->ThrowError("GBlur: %s", e);
+}
+    return f;
 }
 
 
 static AVSValue __cdecl
 create_emask(AVSValue args, void* user_data, ise_t* env)
 {
-    if (!has_sse2()) {
-        env->ThrowError("EMask: This filter requires SSE2.");
-    }
+    TCannyM* f;
+try {
+    validate(!has_sse2(), "This filter requires SSE2.");
+
     float sigma = (float)args[1].AsFloat(1.5);
-    if (sigma < 0.0f) {
-        env->ThrowError("EMask: sigma must be greater than zero.");
-    }
+    validate(sigma < 0.0f, "sigma must be greater than zero.");
+
     int chroma = args[2].AsInt(0);
-    if (chroma < 0 || chroma > 4) {
-        env->ThrowError("EMask: chroma must be set to 0, 1, 2, 3 or 4.");
-    }
+    validate(chroma < 0 || chroma > 4,
+             "chroma must be set to 0, 1, 2, 3 or 4.");
+
     float scale = calc_scale(args[2].AsFloat(50.0));
 
-    return new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
-                       args[5].AsBool(false), scale, args[3].AsInt(HAS_AVX2),
-                       "EMask", env);
+    f = new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
+                    args[5].AsBool(false), scale, args[3].AsInt(HAS_AVX2),
+                    "EMask");
+} catch (const char* e) {
+    env->ThrowError("EMask: %s", e);
+}
+    return f;
 }
 
 

@@ -31,7 +31,7 @@
 #include "simd.h"
 
 
-const float* get_tangent(int idx)
+static const float* get_tangent(int idx)
 {
      alignas(32) static const float tangent[32] = {
         0.414213538169860839843750f, 0.414213538169860839843750f, // tan(pi/8)
@@ -57,7 +57,7 @@ const float* get_tangent(int idx)
 
 
 template <typename Vf, typename Vi, bool CALC_DIR>
-void __stdcall
+static void __stdcall
 standard(float* blurp, const size_t blur_pitch, float* emaskp,
          const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
          const size_t width, const size_t height)
@@ -135,7 +135,7 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
     V = [ 1,  2,  1,  0,  0,  0, -1, -2, -1]
 */
 template <typename Vf, typename Vi, bool CALC_DIR>
-void __stdcall
+static void __stdcall
 sobel(float* blurp, const size_t blur_pitch, float* emaskp,
       const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
       const size_t width, const size_t height)
@@ -215,7 +215,7 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
 
 
 template <typename Vf, typename Vi>
-void __stdcall
+static void __stdcall
 non_max_suppress(const float* emaskp, const size_t em_pitch,
                  const int32_t* dirp, const size_t dir_pitch, float* blurp,
                  const size_t blur_pitch, const size_t width, const size_t height)
@@ -270,18 +270,6 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
         blurp += blur_pitch;
     }
 }
-
-
-using edge_detection_t = void(__stdcall *)(
-    float* blurp, const size_t blur_pitch, float* emaskp,
-    const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
-    const size_t width, const size_t height);
-
-
-using non_max_suppress_t = void (__stdcall *)(
-    const float* emaskp, const size_t em_pitch, const int32_t* dirp,
-    const size_t dir_pitch, float* blurp, const size_t blr_pitch,
-    const size_t width, const size_t height);
 
 
 void __stdcall

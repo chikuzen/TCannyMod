@@ -50,7 +50,7 @@ convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
 template <typename Vf>
 static void
 horizontal_blur(const float* hkernel, float* buffp, const int radius,
-                const size_t width, const float* kernel, float* blurp)
+                const size_t width, float* blurp)
 {
     constexpr size_t step = sizeof(Vf) / sizeof(float);
     const int length = radius * 2 + 1;
@@ -108,8 +108,8 @@ gaussian_blur(const int radius, const float* kernel, const float* hkernel,
             }
             store<Vf>(buffp + x, sum);
         }
-        horizontal_blur<Vf>(hkernel, buffp, radius, width, kernel,
-                            blurp + blur_pitch * y);
+        horizontal_blur<Vf>(hkernel, buffp, radius, width, blurp);
+        blurp += blur_pitch;
 
         for (int l = 0; l < length - 1; ++l) {
             p[l] = p[l + 1];

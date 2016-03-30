@@ -66,7 +66,7 @@ Syntax:
 
              1 - forth SSE4.1 + SSE2 + SSE routine.
 
-             others(64bit only) - use AVX2 + FMA3 + AVX routine.
+             others - use AVX2 + FMA3 + AVX routine.
 
  ------------------------------------------------------------------------
 
@@ -83,7 +83,7 @@ Syntax:
 
         chroma - same as TCannyMod. (default = 0)
 
-        opt - same as TCannyMod. (default = automated)
+        opt - same as TCannyMod. (default = auto)
 
  ------------------------------------------------------------------------
 
@@ -104,7 +104,7 @@ Syntax:
 
         sobel - same as TCannyMod. (default = false)
 
-        opt - same as TCannyMod. (default = automated)
+        opt - same as TCannyMod. (default = auto)
 
 ------------------------------------------------------------------------
 
@@ -136,14 +136,18 @@ Changelog:
     1.0.0 (20160326):
         - Almost rewrite.
         - VS2013 to VS2015.
-        - Add AVX2(64bit only) / SSE4.1(both 32bit and 64bit) support.
+        - Add AVX2(64bit only)/SSE4.1(both 32bit and 64bit) support.
         - Change direction values from 1,3,7,15 to 31,63,127,255.
         - Reduce waste processes.
 
     1.1.0 (20160328):
         - Add EMask().
         - Implement simd non-maximum-suppression.
-        - a bit optimized gaussian-blur/ hysteresis.
+        - a bit optimized gaussian-blur/hysteresis.
+
+    1.1.1 (20160330):
+		- Add AVX2 support for 32bit.
+
 
 Source code:
 

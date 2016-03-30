@@ -126,19 +126,13 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
 
 static arch_t get_arch(int opt)
 {
-    // on 32bit with /arch:AVX outputs weird result.
-    // I don't know why...
     if (opt == 0 || !has_sse41()) {
         return HAS_SSE2;
     }
-#if !defined(_WIN64)
-    return HAS_SSE41;
-#else
     if (opt == 1 || !has_avx2()) {
         return HAS_SSE41;
     }
     return HAS_AVX2;
-#endif
 }
 
 

@@ -38,7 +38,7 @@
 #include "write_frame.h"
 
 
-#define TCANNY_M_VERSION "1.1.0"
+#define TCANNY_M_VERSION "1.1.1"
 
 constexpr size_t GB_MAX_LENGTH = 17;
 

@@ -208,10 +208,8 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
 
 TCannyM::~TCannyM()
 {
-    if (horizontalKernel) {
-        _aligned_free(horizontalKernel);
-        horizontalKernel = nullptr;
-    }
+    _aligned_free(horizontalKernel);
+    horizontalKernel = nullptr;
 }
 
 
@@ -237,10 +235,8 @@ public:
     };
     ~Buffers()
     {
-        if (orig) {
-            _aligned_free(orig);
-            orig = nullptr;
-        }
+        _aligned_free(orig);
+        orig = nullptr;
     };
 };
 

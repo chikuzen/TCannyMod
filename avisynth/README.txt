@@ -146,7 +146,7 @@ Changelog:
         - a bit optimized gaussian-blur/hysteresis.
 
     1.1.1 (20160330):
-		- Add AVX2 support for 32bit.
+        - Add AVX2 support for 32bit.
 
 
 Source code:

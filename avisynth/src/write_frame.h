@@ -34,7 +34,7 @@ template <typename Vf, typename Vi, bool SCALE>
 static void __stdcall
 write_gradient_mask(const float* srcp, uint8_t* dstp, const size_t width,
                     const size_t height, const size_t dst_pitch,
-                    const size_t src_pitch, const float scale)
+                    const size_t src_pitch, const float scale) noexcept
 {
     constexpr size_t align = sizeof(Vi);
     constexpr size_t step = align / sizeof(float);
@@ -59,7 +59,7 @@ write_gradient_mask(const float* srcp, uint8_t* dstp, const size_t width,
             Vi x3 = cvtps_i32(f3);
 
             Vi ret = cvti32_u8(x0, x1, x2, x3);
-            stream<Vi>(dstp + x, ret);
+            stream(dstp + x, ret);
         }
         srcp += src_pitch;
         dstp += dst_pitch;
@@ -71,7 +71,7 @@ template <typename Vi>
 static void __stdcall
 write_gradient_direction(const int32_t* dirp, uint8_t* dstp,
                          const size_t dir_pitch, const size_t dst_pitch,
-                         const size_t width, const size_t height)
+                         const size_t width, const size_t height) noexcept
 {
     constexpr size_t align = sizeof(Vi);
     constexpr size_t step = align / sizeof(int32_t);
@@ -83,7 +83,7 @@ write_gradient_direction(const int32_t* dirp, uint8_t* dstp,
             Vi x2 = load<Vi>(dirp + x + step * 2);
             Vi x3 = load<Vi>(dirp + x + step * 3);
             Vi dst = cvti32_u8(x0, x1, x2, x3);
-            stream<Vi>(dstp + x, dst);
+            stream(dstp + x, dst);
         }
         dirp += dir_pitch;
         dstp += dst_pitch;
@@ -96,7 +96,7 @@ void __stdcall
 write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
                      const size_t dir_pitch, const size_t hyst_pitch,
                      const size_t dst_pitch, const size_t width,
-                     const size_t height)
+                     const size_t height) noexcept
 {
     constexpr size_t align = sizeof(Vi);
     constexpr size_t step = align / sizeof(int32_t);
@@ -110,7 +110,7 @@ write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
             const Vi dir = cvti32_u8(x0, x1, x2, x3);
             const Vi hyst = load<Vi>(hystp + x);
             const Vi dst = and_si(dir, hyst);
-            stream<Vi>(dstp + x, dst);
+            stream(dstp + x, dst);
         }
         dirp += dir_pitch;
         hystp += hyst_pitch;

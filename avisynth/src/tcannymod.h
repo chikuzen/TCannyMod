@@ -34,7 +34,7 @@
 #include <windows.h>
 #include <avisynth.h>
 
-#define TCANNY_M_VERSION "1.1.1"
+#define TCANNY_M_VERSION "1.2.0"
 
 constexpr size_t GB_MAX_LENGTH = 17;
 
@@ -80,6 +80,7 @@ class TCannyM : public GenericVideoFilter {
     const char* name;
     int numPlanes;
     size_t align;
+    bool isPlus;
     int mode;
     int chroma;
     float th_min;
@@ -109,13 +110,14 @@ class TCannyM : public GenericVideoFilter {
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
-            int chroma, bool sobel, float scale, int opt, const char* name);
+            int chroma, bool sobel, float scale, int opt, const char* name,
+            bool is_plus);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, ise_t* env);
 };
 
-extern int has_sse2();
-extern int has_sse41();
-extern int has_avx();
-extern int has_avx2();
+extern bool has_sse2();
+extern bool has_sse41();
+extern bool has_avx();
+extern bool has_avx2();
 #endif

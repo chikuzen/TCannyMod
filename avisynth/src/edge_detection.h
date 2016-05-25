@@ -31,7 +31,7 @@
 #include "simd.h"
 
 
-static const float* get_tangent(int idx)
+static const float* get_tangent(int idx) noexcept
 {
      alignas(32) static const float tangent[32] = {
         0.414213538169860839843750f, 0.414213538169860839843750f, // tan(pi/8)
@@ -60,7 +60,7 @@ template <typename Vf, typename Vi, bool CALC_DIR>
 static void __stdcall
 standard(float* blurp, const size_t blur_pitch, float* emaskp,
          const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
-         const size_t width, const size_t height)
+         const size_t width, const size_t height) noexcept
 {
 
     constexpr size_t step = sizeof(Vf) / sizeof(float);
@@ -110,13 +110,13 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
                 Vi d3 = castps_si(and_ps(cmpge_ps(tan, t1125), cmplt_ps(tan, t1575)));
                 d3 = srli_i32(d3, 24);
                 d0 = or_si(or_si(d0, d1), or_si(d2, d3));
-                stream<Vi>(dirp + x, d0);
+                stream(dirp + x, d0);
             }
 
             Vf magnitude = mul(gx, gx);
             magnitude = madd(gy, gy, magnitude);
             magnitude = sqrt(magnitude);
-            stream<Vf>(emaskp + x, magnitude);
+            stream(emaskp + x, magnitude);
         }
         emaskp += emask_pitch;
         dirp += dir_pitch;
@@ -138,7 +138,7 @@ template <typename Vf, typename Vi, bool CALC_DIR>
 static void __stdcall
 sobel(float* blurp, const size_t blur_pitch, float* emaskp,
       const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
-      const size_t width, const size_t height)
+      const size_t width, const size_t height) noexcept
 {
     constexpr size_t step = sizeof(Vf) / sizeof(float);
 
@@ -197,13 +197,13 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
                 Vi d3 = castps_si(and_ps(cmpge_ps(tan, t1125), cmplt_ps(tan, t1575)));
                 d3 = srli_i32(d3, 24);
                 d0 = or_si(or_si(d0, d1), or_si(d2, d3));
-                stream<Vi>(dirp + x, d0);
+                stream(dirp + x, d0);
             }
 
             Vf magnitude = mul(gx, gx);
             magnitude = madd(gy, gy, magnitude);
             magnitude = sqrt(magnitude);
-            stream<Vf>(emaskp + x, magnitude);
+            stream(emaskp + x, magnitude);
         }
         emaskp += emask_pitch;
         dirp += dir_pitch;
@@ -218,7 +218,8 @@ template <typename Vf, typename Vi>
 static void __stdcall
 non_max_suppress(const float* emaskp, const size_t em_pitch,
                  const int32_t* dirp, const size_t dir_pitch, float* blurp,
-                 const size_t blur_pitch, const size_t width, const size_t height)
+                 const size_t blur_pitch, const size_t width,
+                 const size_t height) noexcept
 {
     constexpr size_t step = sizeof(Vf) / sizeof(float);
 
@@ -275,7 +276,7 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
 void __stdcall
 hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,
            const size_t bpitch, const int width, const int height,
-           const float tmin, const float tmax);
+           const float tmin, const float tmax) noexcept;
 
 #endif
 

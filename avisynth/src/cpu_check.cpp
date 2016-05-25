@@ -71,12 +71,12 @@ static inline void get_cpuid2(int *array, int info_type, int ecx)
 #endif
 }
 
-static inline int is_bit_set(int bitfield, int bit)
+static inline int is_bit_set(int bitfield, int bit)  noexcept
 {
     return bitfield & (1 << bit);
 }
 
-static uint32_t get_simd_support_info(void)
+static uint32_t get_simd_support_info(void) noexcept
 {
     uint32_t ret = 0;
     int regs[4] = {0};
@@ -157,27 +157,27 @@ static uint32_t get_simd_support_info(void)
     return ret;
 }
 
-int has_sse2()
+bool has_sse2() noexcept
 {
-    return !!(get_simd_support_info() & CPU_SSE2_SUPPORT);
+    return (get_simd_support_info() & CPU_SSE2_SUPPORT) != 0;
 }
 
-int has_ssse3()
+bool has_ssse3() noexcept
 {
-    return !!(get_simd_support_info() & CPU_SSSE3_SUPPORT);
+    return (get_simd_support_info() & CPU_SSSE3_SUPPORT) != 0;
 }
 
-int has_sse41()
+bool has_sse41() noexcept
 {
-    return !!(get_simd_support_info() & CPU_SSE4_1_SUPPORT);
+    return (get_simd_support_info() & CPU_SSE4_1_SUPPORT) != 0;
 }
 
-int has_avx()
+bool has_avx() noexcept
 {
-    return !!(get_simd_support_info() & CPU_AVX_SUPPORT);
+    return (get_simd_support_info() & CPU_AVX_SUPPORT) != 0;
 }
 
-int has_avx2()
+bool has_avx2() noexcept
 {
-    return !!(get_simd_support_info() & CPU_AVX2_SUPPORT);
+    return (get_simd_support_info() & CPU_AVX2_SUPPORT) != 0;
 }

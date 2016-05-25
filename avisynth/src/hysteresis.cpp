@@ -41,7 +41,7 @@ struct Pos {
 static __forceinline void
 hystfunc(const int32_t x, const int32_t y, float* edge, uint8_t* hyst,
          const size_t epitch, const size_t hpitch, const float th,
-         std::vector<Pos>& stack)
+         std::vector<Pos>& stack) noexcept
 {
     if (!hyst[x + y * hpitch] && edge[x + y * epitch] > th) {
         edge[x + y * epitch] = FLT_MAX;
@@ -54,10 +54,11 @@ hystfunc(const int32_t x, const int32_t y, float* edge, uint8_t* hyst,
 void __stdcall
 hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,
            const size_t bpitch, const int width, const int height,
-           const float tmin, const float tmax)
+           const float tmin, const float tmax) noexcept
 {
     memset(hystp, 0, hpitch * height);
     std::vector<Pos> stack;
+    stack.reserve(512);
 
     for (int32_t y = 0; y < height; ++y) {
         for (int32_t x = 0; x < width; ++x) {

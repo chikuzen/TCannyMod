@@ -34,46 +34,55 @@
 #include <windows.h>
 #include <avisynth.h>
 
-#define TCANNY_M_VERSION "1.2.0"
+#define TCANNY_M_VERSION "1.3.0"
 
-constexpr size_t GB_MAX_LENGTH = 17;
 
 typedef IScriptEnvironment ise_t;
 
 
-using gaussian_blur_t = void(__stdcall *)(
+typedef void(__stdcall *gaussian_blur_t)(
     const int radius, const float* kernel, const float* hkernel, float* buffp,
     float* blurp, const size_t blur_pitch, const uint8_t* srcp,
     const size_t src_pitch, const size_t width, const size_t height);
 
 
-using edge_detection_t = void(__stdcall *)(
+typedef void(__stdcall *edge_detection_t)(
     float* blurp, const size_t blur_pitch, float* emaskp,
     const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
     const size_t width, const size_t height);
 
 
-using non_max_suppress_t = void (__stdcall *)(
+typedef void (__stdcall *non_max_suppress_t)(
     const float* emaskp, const size_t em_pitch, const int32_t* dirp,
     const size_t dir_pitch, float* blurp, const size_t blr_pitch,
     const size_t width, const size_t height);
 
 
-using write_gradient_mask_t = void(__stdcall *)(
+typedef void(__stdcall *write_gradient_mask_t)(
     const float* srcp, uint8_t* dstp, const size_t width,
     const size_t height, const size_t dst_pitch, const size_t src_pitch,
     const float scale);
 
 
-using write_gradient_direction_t = void(__stdcall *)(
+typedef void(__stdcall *write_gradient_direction_t)(
     const int32_t* dirp, uint8_t* dstp, const size_t dir_pitch,
     const size_t dst_pitch, const size_t width, const size_t height);
 
 
-using write_edge_direction_t = void (__stdcall *)(
+typedef void (__stdcall *write_edge_direction_t)(
     const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
     const size_t dir_pitch, const size_t hyst_pitch, const size_t dst_pitch,
     const size_t width, const size_t height);
+
+
+enum arch_t {
+    HAS_SSE2,
+    HAS_SSE41,
+    HAS_AVX2,
+};
+
+
+constexpr size_t GB_MAX_LENGTH = 17;
 
 
 class Buffers {
@@ -126,11 +135,29 @@ class TCannyM : public GenericVideoFilter {
 
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
-            int chroma, bool sobel, float scale, int opt, const char* name,
+            int chroma, bool sobel, float scale, arch_t arch, const char* name,
             bool is_plus);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, ise_t* env);
 };
+
+
+gaussian_blur_t get_gaussian_blur(arch_t arch) noexcept;
+
+edge_detection_t get_edge_detection(bool use_sobel, bool calc_dir, arch_t arch) noexcept;
+
+non_max_suppress_t get_non_max_suppress(arch_t arch) noexcept;
+
+write_gradient_mask_t get_write_gradient_mask(bool scale, arch_t arch) noexcept;
+
+write_gradient_direction_t get_write_gradient_direction(arch_t arch) noexcept;
+
+write_edge_direction_t get_write_edge_direction(arch_t arch) noexcept;
+
+void __stdcall
+hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,
+    const size_t bpitch, const int width, const int height,
+    const float tmin, const float tmax) noexcept;
 
 extern bool has_sse2();
 extern bool has_sse41();

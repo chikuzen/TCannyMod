@@ -33,14 +33,11 @@
 #else
 #include <smmintrin.h>
 #endif
+#include "tcannymod.h"
+
 
 #define SFINLINE static __forceinline
 
-enum arch_t {
-    HAS_SSE2,
-    HAS_SSE41,
-    HAS_AVX2,
-};
 
 
 /* -----set-------------------------*/

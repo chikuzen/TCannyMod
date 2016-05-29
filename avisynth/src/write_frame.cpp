@@ -1,5 +1,5 @@
 /*
-  write_frame.h
+  write_frame.cpp
   
   This file is part of TCannyMod
   
@@ -23,10 +23,9 @@
 */
 
 
-#ifndef WRITE_FRAME_H
-#define WRITE_FRAME_H
 
 #include <cstdint>
+#include "tcannymod.h"
 #include "simd.h"
 
 
@@ -92,7 +91,7 @@ write_gradient_direction(const int32_t* dirp, uint8_t* dstp,
 
 
 template <typename Vi>
-void __stdcall
+static void __stdcall
 write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
                      const size_t dir_pitch, const size_t hyst_pitch,
                      const size_t dst_pitch, const size_t width,
@@ -119,5 +118,37 @@ write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
 }
 
 
+write_gradient_mask_t get_write_gradient_mask(bool scale, arch_t arch) noexcept
+{
+#if defined(__AVX2__)
+    if (arch == HAS_AVX2) {
+        return scale ? write_gradient_mask<__m256, __m256i, true>
+            : write_gradient_mask<__m256, __m256i, false>;
+    }
 #endif
+    return scale ? write_gradient_mask<__m128, __m128i, true>
+        : write_gradient_mask<__m128, __m128i, false>; 
 
+}
+
+
+write_gradient_direction_t get_write_gradient_direction(arch_t arch) noexcept
+{
+#if defined(__AVX2__)
+    if (arch == HAS_AVX2) {
+        return write_gradient_direction<__m256i>;
+    }
+#endif
+    return write_gradient_direction<__m128i>;
+}
+
+write_edge_direction_t get_write_edge_direction(arch_t arch) noexcept
+{
+#if defined(__AVX2__)
+    if (arch == HAS_AVX2) {
+        return write_edge_direction<__m256i>;
+    }
+#endif
+    return write_edge_direction<__m128i>;
+
+}

@@ -26,59 +26,9 @@
 #include <malloc.h>
 #include <cmath>
 #include <algorithm>
-#include <map>
-#include <tuple>
 #include <stdexcept>
 #include "tcannymod.h"
-#include "gaussian_blur.h"
-#include "edge_detection.h"
-#include "write_frame.h"
 
-
-static edge_detection_t
-get_edge_detection(bool use_sobel, bool calc_dir, arch_t arch) noexcept
-{
-    using std::make_tuple;
-    std::map<std::tuple<bool, bool, arch_t>, edge_detection_t> func;
-
-    func[make_tuple(false, false, HAS_SSE2)] = standard<__m128, __m128i, false>;
-    func[make_tuple(false, true, HAS_SSE2)] = standard<__m128, __m128i, true>;
-    func[make_tuple(true, false, HAS_SSE2)] = sobel<__m128, __m128i, false>;
-    func[make_tuple(true, true, HAS_SSE2)] = sobel<__m128, __m128i, true>;
-#if defined(__AVX2__)
-    func[make_tuple(false, false, HAS_AVX2)] = standard<__m256, __m256i, false>;
-    func[make_tuple(false, true, HAS_AVX2)] = standard<__m256, __m256i, true>;
-    func[make_tuple(true, false, HAS_AVX2)] = sobel<__m256, __m256i, false>;
-    func[make_tuple(true, true, HAS_AVX2)] = sobel<__m256, __m256i, true>;
-#endif
-
-    arch_t a = arch == HAS_SSE41 ? HAS_SSE2 : arch;
-
-    return func[make_tuple(use_sobel, calc_dir, a)];
-}
-
-
-
-static write_gradient_mask_t
-get_write_gradient_mask(bool scale, arch_t arch) noexcept
-{
-#if defined(__AVX2__)
-    if (arch == HAS_AVX2) {
-        return scale ? write_gradient_mask<__m256, __m256i, true>
-                     : write_gradient_mask<__m256, __m256i, false>;
-    }
-#endif
-    return scale ? write_gradient_mask<__m128, __m128i, true>
-                 : write_gradient_mask<__m128, __m128i, false>; 
-
-}
-
-
-static inline void validate(bool cond, const char* msg)
-{
-    if (cond)
-        throw std::runtime_error(msg);
-}
 
 
 template <typename T>
@@ -129,6 +79,13 @@ Buffers::~Buffers()
 };
 
 
+static inline void validate(bool cond, const char* msg)
+{
+    if (cond)
+        throw std::runtime_error(msg);
+}
+
+
 static void __stdcall
 set_gb_kernel(float sigma, int& radius, float* kernel)
 {
@@ -146,32 +103,14 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
 }
 
 
-static arch_t get_arch(int opt, bool is_plus) noexcept
-{
-    if (opt == 0 || !has_sse41()) {
-        return HAS_SSE2;
-    }
-#if !defined(__AVX2__)
-    return HAS_SSE41;
-#else
-    if (opt == 1 || !has_avx2()) {
-        return HAS_SSE41;
-    }
-    return HAS_AVX2;
-#endif
-}
-
-
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
-                 bool sobel, float s, int opt, const char* n, bool is_plus) :
+                 bool sobel, float s, arch_t arch, const char* n, bool is_plus) :
     GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin), th_max(tmax),
     chroma(c), name(n), scale(s), isPlus(is_plus), buff(nullptr)
 {
     validate(!vi.IsPlanar(), "Planar format only.");
 
     numPlanes = (vi.IsY8() || chroma == 0) ? 1 : 3;
-
-    arch_t arch = get_arch(opt, isPlus);
 
     align = (arch < HAS_AVX2) ? 16 : 32;
 
@@ -206,33 +145,19 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
     emaskPitch /= sizeof(float);
     dirPitch /= sizeof(int32_t);
 
-    switch (arch) {
-#if defined(__AVX2__)
-    case HAS_AVX2:
-        gaussianBlur = gaussian_blur<__m256, GB_MAX_LENGTH, HAS_AVX2>;
-        nonMaximumSuppression = non_max_suppress<__m256, __m256i>;
-        writeGradientDirection = write_gradient_direction<__m256i>;
-        writeEdgeDirection = write_edge_direction<__m256i>;
-        break;
-#endif
-    case HAS_SSE41:
-        gaussianBlur = gaussian_blur<__m128, GB_MAX_LENGTH, HAS_SSE41>;
-        nonMaximumSuppression = non_max_suppress<__m128, __m128i>;
-        writeGradientDirection = write_gradient_direction<__m128i>;
-        writeEdgeDirection = write_edge_direction<__m128i>;
-        break;
-    default:
-        gaussianBlur = gaussian_blur<__m128, GB_MAX_LENGTH, HAS_SSE2>;
-        nonMaximumSuppression = non_max_suppress<__m128, __m128i>;
-        writeGradientDirection = write_gradient_direction<__m128i>;
-        writeEdgeDirection = write_edge_direction<__m128i>;
-    }
+    gaussianBlur = get_gaussian_blur(arch);
 
     edgeDetection = get_edge_detection(sobel, (mode != 1 && mode != 4), arch);
+
+    nonMaximumSuppression = get_non_max_suppress(arch);
 
     writeBluredFrame = get_write_gradient_mask(false, arch);
 
     writeGradientMask = get_write_gradient_mask(scale != 1.0f, arch);
+
+    writeGradientDirection = get_write_gradient_direction(arch);
+
+    writeEdgeDirection = get_write_edge_direction(arch);
 
     if (!isPlus) {
         buff = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize,
@@ -250,8 +175,6 @@ TCannyM::~TCannyM()
 }
 
 
-
-
 PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 {
     PVideoFrame src = child->GetFrame(n, env);
@@ -261,12 +184,12 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
     if (isPlus) {
         b = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize, align,
                         true, env);
-        if (b->orig == nullptr) {
+        if (!b || !b->orig) {
             env->ThrowError("%s: failed to allocate buffer.", name);
         }
     }
 
-    const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
+    static const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
 
     for (int i = 0; i < numPlanes; i++) {
 
@@ -332,6 +255,21 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 }
 
 
+static arch_t get_arch(int opt, bool is_plus) noexcept
+{
+    if (opt == 0 || !has_sse41()) {
+        return HAS_SSE2;
+    }
+#if !defined(__AVX2__)
+    return HAS_SSE41;
+#else
+    if (opt == 1 || !has_avx2()) {
+        return HAS_SSE41;
+    }
+    return HAS_AVX2;
+#endif
+}
+
 
 static float calc_scale(double gmmax)
 {
@@ -364,10 +302,13 @@ create_tcannymod(AVSValue args, void* user_data, ise_t* env)
         float scale = calc_scale(args[7].AsFloat(255.0));
     
         bool is_plus = user_data != nullptr;
+
+        arch_t arch = get_arch(args[8].AsInt(HAS_AVX2), is_plus);
     
         return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
-                           args[5].AsBool(false), scale, args[8].AsInt(HAS_AVX2),
-                           "TCannyMod", is_plus);
+                           args[5].AsBool(false), scale, arch, "TCannyMod",
+                           is_plus);
+
     } catch (std::runtime_error& e) {
         env->ThrowError("TCannyMod: %s", e.what());
     }
@@ -389,9 +330,12 @@ create_gblur(AVSValue args, void* user_data, ise_t* env)
                  "chroma must be set to 0, 1, 2, 3 or 4.");
     
         bool is_plus = user_data != nullptr;
+
+        arch_t arch = get_arch(args[3].AsInt(HAS_AVX2), is_plus);
     
-        return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma, false,
-                        1.0f, args[3].AsInt(HAS_AVX2), "GBlur", is_plus);
+        return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma,
+                           false, 1.0f, arch, "GBlur", is_plus);
+
     } catch (std::runtime_error& e) {
         env->ThrowError("GBlur: %s", e.what());
     }
@@ -415,10 +359,12 @@ create_emask(AVSValue args, void* user_data, ise_t* env)
         float scale = calc_scale(args[2].AsFloat(50.0));
     
         bool is_plus = user_data != nullptr;
+
+        arch_t arch = get_arch(args[3].AsInt(HAS_AVX2), is_plus);
     
         return new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
-                           args[5].AsBool(false), scale, args[3].AsInt(HAS_AVX2),
-                           "EMask", is_plus);
+                           args[5].AsBool(false), scale, arch, "EMask", is_plus);
+
     } catch (std::runtime_error& e) {
         env->ThrowError("EMask: %s", e.what());
     }
@@ -449,6 +395,7 @@ AvisynthPluginInit3(ise_t* env, const AVS_Linkage* const vectors)
 
     env->AddFunction("GBlur", "c[sigma]f[chroma]i[opt]i",
                      create_gblur, is_plus);
+
     env->AddFunction("EMask", "c[sigma]f[gmmax]f[chroma]i[sobel]b[opt]i",
                      create_emask, is_plus);
 

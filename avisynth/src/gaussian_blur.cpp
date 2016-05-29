@@ -1,5 +1,5 @@
 /*
-  gaussian_blur.h
+  gaussian_blur.cpp
 
   This file is part of TCannyMod
 
@@ -22,10 +22,9 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
 */
 
-#ifndef GAUSSIAN_BLUR_H
-#define GAUSSIAN_BLUR_H
 
 #include <cstdint>
+#include "tcannymod.h"
 #include "simd.h"
 
 
@@ -123,5 +122,15 @@ gaussian_blur(const int radius, const float* kernel, const float* hkernel,
 }
 
 
+gaussian_blur_t get_gaussian_blur(arch_t arch) noexcept
+{
+#if defined(__AVX2__)
+    if (arch == HAS_AVX2) {
+        return gaussian_blur<__m256, GB_MAX_LENGTH, HAS_AVX2>;
+    }
 #endif
-
+    if (arch == HAS_SSE41) {
+        return gaussian_blur<__m128, GB_MAX_LENGTH, HAS_SSE41>;
+    }
+    return gaussian_blur<__m128, GB_MAX_LENGTH, HAS_SSE2>;
+}

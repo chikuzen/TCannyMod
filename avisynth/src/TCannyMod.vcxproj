@@ -140,15 +140,15 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="cpu_check.cpp" />
+    <ClCompile Include="edge_detection.cpp" />
+    <ClCompile Include="gaussian_blur.cpp" />
     <ClCompile Include="hysteresis.cpp" />
     <ClCompile Include="tcannymod.cpp" />
+    <ClCompile Include="write_frame.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="edge_detection.h" />
-    <ClInclude Include="gaussian_blur.h" />
     <ClInclude Include="simd.h" />
     <ClInclude Include="tcannymod.h" />
-    <ClInclude Include="write_frame.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

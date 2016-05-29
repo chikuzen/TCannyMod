@@ -27,7 +27,7 @@
 #include <vector>
 #include <cmath>
 #include <cfloat>
-#include "edge_detection.h"
+#include "tcannymod.h"
 
 
 struct Pos {

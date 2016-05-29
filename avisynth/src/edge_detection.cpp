@@ -1,5 +1,5 @@
 /*
-  edge_detection.h
+  edge_detection.cpp
   
   This file is part of TCannyMod
   
@@ -23,11 +23,12 @@
 */
 
 
-#ifndef EDGE_DETECTION_H
-#define EDGE_DETECTION_H
 
 #include <cstdint>
 #include <algorithm>
+#include <map>
+#include <tuple>
+#include "tcannymod.h"
 #include "simd.h"
 
 
@@ -273,10 +274,37 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
 }
 
 
-void __stdcall
-hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,
-           const size_t bpitch, const int width, const int height,
-           const float tmin, const float tmax) noexcept;
+edge_detection_t
+get_edge_detection(bool use_sobel, bool calc_dir, arch_t arch) noexcept
+{
+    using std::make_tuple;
+    std::map<std::tuple<bool, bool, arch_t>, edge_detection_t> func;
 
+    func[make_tuple(false, false, HAS_SSE2)] = standard<__m128, __m128i, false>;
+    func[make_tuple(false, true, HAS_SSE2)] = standard<__m128, __m128i, true>;
+    func[make_tuple(true, false, HAS_SSE2)] = sobel<__m128, __m128i, false>;
+    func[make_tuple(true, true, HAS_SSE2)] = sobel<__m128, __m128i, true>;
+#if defined(__AVX2__)
+    func[make_tuple(false, false, HAS_AVX2)] = standard<__m256, __m256i, false>;
+    func[make_tuple(false, true, HAS_AVX2)] = standard<__m256, __m256i, true>;
+    func[make_tuple(true, false, HAS_AVX2)] = sobel<__m256, __m256i, false>;
+    func[make_tuple(true, true, HAS_AVX2)] = sobel<__m256, __m256i, true>;
 #endif
+
+    arch_t a = arch == HAS_SSE41 ? HAS_SSE2 : arch;
+
+    return func[make_tuple(use_sobel, calc_dir, a)];
+}
+
+
+non_max_suppress_t get_non_max_suppress(arch_t arch) noexcept
+{
+#if defined(__AVX2__)
+    if (arch == HAS_AVX2) {
+        return non_max_suppress<__m256, __m256i>;
+    }
+#endif
+    return non_max_suppress<__m128, __m128i>;
+}
+
 

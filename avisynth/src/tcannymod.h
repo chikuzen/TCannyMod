@@ -76,6 +76,21 @@ using write_edge_direction_t = void (__stdcall *)(
     const size_t width, const size_t height);
 
 
+class Buffers {
+    ise_t* env;
+    bool isPlus;
+public:
+    uint8_t* orig;
+    float* buffp;
+    float* blurp;
+    float* emaskp;
+    int32_t* dirp;
+    uint8_t* hystp;
+    Buffers(size_t bufsize, size_t blsize, size_t emsize, size_t dirsize,
+            size_t hystsize, size_t align, bool ip, ise_t* e);
+    ~Buffers();
+};
+
 class TCannyM : public GenericVideoFilter {
     const char* name;
     int numPlanes;
@@ -90,6 +105,7 @@ class TCannyM : public GenericVideoFilter {
     int gbRadius; // max: 8
     float gbKernel[GB_MAX_LENGTH];
     float* horizontalKernel;
+    Buffers* buff;
     size_t blurPitch;
     size_t emaskPitch;
     size_t dirPitch;

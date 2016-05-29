@@ -107,6 +107,28 @@ static inline void my_free(void* p, bool is_plus, ise_t* env) noexcept
 }
 
 
+Buffers::Buffers(size_t bufsize, size_t blsize, size_t emsize, size_t dirsize,
+    size_t hystsize, size_t align, bool ip, ise_t* e) :
+    env(e), isPlus(ip)
+{
+    size_t total_size = bufsize + blsize + emsize + dirsize + hystsize;
+    orig = my_malloc<uint8_t*>(
+        total_size, align, isPlus, AVS_POOLED_ALLOC, env);
+
+    buffp = reinterpret_cast<float*>(orig) + 8;
+    blurp = reinterpret_cast<float*>(orig + bufsize + align);
+    emaskp = reinterpret_cast<float*>(orig + bufsize + blsize);
+    dirp = reinterpret_cast<int32_t*>(orig + bufsize + blsize + emsize);
+    hystp = orig + total_size - hystsize;
+};
+
+
+Buffers::~Buffers()
+{
+    my_free(orig, isPlus, env);
+};
+
+
 static void __stdcall
 set_gb_kernel(float sigma, int& radius, float* kernel)
 {
@@ -143,7 +165,7 @@ static arch_t get_arch(int opt, bool is_plus) noexcept
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
                  bool sobel, float s, int opt, const char* n, bool is_plus) :
     GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin), th_max(tmax),
-    chroma(c), name(n), scale(s), isPlus(is_plus)
+    chroma(c), name(n), scale(s), isPlus(is_plus), buff(nullptr)
 {
     validate(!vi.IsPlanar(), "Planar format only.");
 
@@ -211,44 +233,23 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
     writeBluredFrame = get_write_gradient_mask(false, arch);
 
     writeGradientMask = get_write_gradient_mask(scale != 1.0f, arch);
+
+    if (!isPlus) {
+        buff = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize,
+                           align, false, nullptr);
+    }
 }
 
 
 TCannyM::~TCannyM()
 {
     my_free(horizontalKernel, false, nullptr);
+    if (!isPlus) {
+        delete buff;
+    }
 }
 
 
-class Buffers {
-    ise_t* env;
-    bool isPlus;
-public:
-    uint8_t* orig;
-    float* buffp;
-    float* blurp;
-    float* emaskp;
-    int32_t* dirp;
-    uint8_t* hystp;
-    Buffers(size_t bufsize, size_t blsize, size_t emsize, size_t dirsize,
-            size_t hystsize, size_t align, bool ip, ise_t* e) :
-        env(e), isPlus(ip)
-    {
-        size_t total_size = bufsize + blsize + emsize + dirsize + hystsize;
-        orig = my_malloc<uint8_t*>(
-            total_size, align, isPlus, AVS_POOLED_ALLOC, env);
-
-        buffp = reinterpret_cast<float*>(orig) + 8;
-        blurp = reinterpret_cast<float*>(orig + bufsize + align);
-        emaskp = reinterpret_cast<float*>(orig + bufsize + blsize);
-        dirp = reinterpret_cast<int32_t*>(orig + bufsize + blsize + emsize);
-        hystp = orig + total_size - hystsize;
-    };
-    ~Buffers()
-    {
-        my_free(orig, isPlus, env);
-    };
-};
 
 
 PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
@@ -256,10 +257,13 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
     PVideoFrame src = child->GetFrame(n, env);
     PVideoFrame dst = env->NewVideoFrame(vi, align);
 
-    auto b = Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize, align,
-                     isPlus, env);
-    if (b.orig == nullptr) {
-        env->ThrowError("%s: failed to allocate buffer.", name);
+    Buffers* b = buff;
+    if (isPlus) {
+        b = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize, align,
+                        true, env);
+        if (b->orig == nullptr) {
+            env->ThrowError("%s: failed to allocate buffer.", name);
+        }
     }
 
     const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
@@ -283,41 +287,45 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
             continue;
         }
 
-        gaussianBlur(gbRadius, gbKernel, horizontalKernel, b.buffp, b.blurp,
+        gaussianBlur(gbRadius, gbKernel, horizontalKernel, b->buffp, b->blurp,
                      blurPitch, srcp, src_pitch, width, height);
         if (mode == 4) {
-            writeBluredFrame(b.blurp, dstp, width, height, dst_pitch,
+            writeBluredFrame(b->blurp, dstp, width, height, dst_pitch,
                              blurPitch, 1.0);
             continue;
         }
 
-        edgeDetection(b.blurp, blurPitch, b.emaskp, emaskPitch, b.dirp,
+        edgeDetection(b->blurp, blurPitch, b->emaskp, emaskPitch, b->dirp,
                       dirPitch, width, height);
 
         if (mode == 1) {
-            writeGradientMask(b.emaskp, dstp, width, height, dst_pitch,
+            writeGradientMask(b->emaskp, dstp, width, height, dst_pitch,
                               emaskPitch, scale);
             continue;
         }
         if (mode == 3) {
-            writeGradientDirection(b.dirp, dstp, dirPitch, dst_pitch, width,
+            writeGradientDirection(b->dirp, dstp, dirPitch, dst_pitch, width,
                                    height);
             continue;
         }
 
-        nonMaximumSuppression(b.emaskp, emaskPitch, b.dirp, dirPitch, b.blurp,
+        nonMaximumSuppression(b->emaskp, emaskPitch, b->dirp, dirPitch, b->blurp,
                               blurPitch, width, height);
 
-        hysteresis(b.hystp, hystPitch, b.blurp, blurPitch, width, height,
+        hysteresis(b->hystp, hystPitch, b->blurp, blurPitch, width, height,
                    th_min, th_max);
 
         if (mode == 2) {
-            writeEdgeDirection(b.dirp, b.hystp, dstp, dirPitch, hystPitch,
+            writeEdgeDirection(b->dirp, b->hystp, dstp, dirPitch, hystPitch,
                                dst_pitch, width, height);
             continue;
         }
 
-        env->BitBlt(dstp, dst_pitch, b.hystp, hystPitch, width, height);
+        env->BitBlt(dstp, dst_pitch, b->hystp, hystPitch, width, height);
+    }
+
+    if (isPlus) {
+        delete b;
     }
 
     return dst;

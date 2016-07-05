@@ -304,7 +304,7 @@ create_tcannymod(AVSValue args, void* user_data, ise_t* env)
         bool is_plus = user_data != nullptr;
 
         arch_t arch = get_arch(args[8].AsInt(HAS_AVX2), is_plus);
-    
+
         return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
                            args[5].AsBool(false), scale, arch, "TCannyMod",
                            is_plus);

@@ -131,9 +131,13 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
 
 /*
     sobel operator(3x3)
-         |    p0   |      p1    |     p2  | 
-    H = [-1,  0,  1, -2,  0,  2, -1,  0,  1]
-    V = [ 1,  2,  1,  0,  0,  0, -1, -2, -1]
+
+    H = [-1,  0,  1,    -> p0
+         -2,  0,  2,    -> p1
+         -1,  0,  1]    -> p2
+    V = [ 1,  2,  1,    -> p0
+          0,  0,  0,    -> p1
+         -1, -2, -1]    -> p2
 */
 template <typename Vf, typename Vi, bool CALC_DIR>
 static void __stdcall

@@ -15,7 +15,7 @@ Syntax:
 
     parameters:
 
-        clip - planar formats only.
+        clip - planar 8bit formats only.
 
         mode - sets output format (default = 0)
 
@@ -118,16 +118,14 @@ Note:
 
     - Probabry, this filter is able to work on Avisynth+'s "MT_NICE_FILTER" mode.(from v1.0.0)
 
-    - TCannyMod_avx.dll is compiled with /arch:AVX.
+    - TCannyMod_avx2.dll is compiled with /arch:AVX2.
 
 
 Requirements:
 
-    Avisynth2.6.0/Avisynth+r1576 or greater.
+    Avisynth2.6.0/Avisynth+r2005 or greater.
     Microsoft Visual C++ 2015 Redistributable Package
-    WindowsVistaSP2 or later
-    Avisynth2.60 or Avisynth+
-    WindowsVistasp2/7sp1/8.1/10
+    Windows Vista sp2 / 7 sp1 / 8.1 / 10
     SSE2 capable CPU
 
 
@@ -147,6 +145,15 @@ Changelog:
 
     1.1.1 (20160330):
         - Add AVX2 support for 32bit.
+
+    1.2.0 (2016):
+        - Set filter mode as MT_NICE_FILTER on Avisynth+ MT.
+        - Use buffer pool on Avisynth+ MT.
+        - Disable AVX2/FMA3/AVX code when /arch:AVX2 is not set.
+        - Disable AVX2/FMA3/AVX code on Avisynth2.6.
+
+    1.3.0 (20160705)
+        - Update avisynth.h to Avisynth+MT r2005.
 
 
 Source code:

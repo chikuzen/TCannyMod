@@ -27,10 +27,10 @@
 #define TCANNY_MOD_H
 
 #include <cstdint>
-#ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
-    #define NOMINMAX
-#endif
+#define WIN32_LEAN_AND_MEAN
+#define VC_EXTRALEAN
+#define NOMINMAX
+#define NOGDI
 #include <windows.h>
 #include <avisynth.h>
 

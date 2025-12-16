@@ -254,56 +254,61 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
     return dst;
 }
 
-
-static arch_t get_arch(int opt, bool is_plus) noexcept
+static inline bool has_avx(ise_t* env) noexcept
 {
-    if (opt == 0 || !has_sse41()) {
-        return HAS_SSE2;
-    }
-#if !defined(__AVX2__)
-    return HAS_SSE41;
-#else
-    if (opt == 1 || !has_avx2()) {
-        return HAS_SSE41;
-    }
-    return HAS_AVX2;
-#endif
+    auto f = env->GetCPUFlags();
+    return f & ::CPUF_AVX;
 }
 
 
-static float calc_scale(double gmmax)
+static arch_t get_arch(int opt, ise_t* env) noexcept
+{
+    auto f = env->GetCPUFlags();
+    if (opt == 0 || opt == 1) {
+        return HAS_SSE41;
+    }
+    if (f & (CPUF_AVX2 | CPUF_FMA3))
+        return HAS_AVX2;
+    else
+        return HAS_SSE41;
+}
+
+
+static float calc_scale(double gmmax) noexcept
 {
     return static_cast<float>(255.0 / std::min(std::max(gmmax, 1.0), 255.0));
 }
+
+
 
 
 static AVSValue __cdecl
 create_tcannymod(AVSValue args, void* user_data, ise_t* env)
 {
     try {
-        validate(!has_sse2(), "This filter requires SSE2.");
-    
+        validate(!has_avx(env), "This filter requires AVX.");
+
         int mode = args[1].AsInt(0);
         validate(mode < 0 || mode > 4, "mode must be between 0 and 4.");
-    
+
         float sigma = static_cast<float>(args[2].AsFloat(1.5f));
         validate(sigma < 0.0f, "sigma must be greater than zero.");
-    
+
         float tmin = static_cast<float>(args[4].AsFloat(0.1f));
         validate(tmin < 0.0f, "t_l must be greater than zero.");
-    
+
         float tmax = static_cast<float>(args[3].AsFloat(8.0f));
         validate(tmax < tmin, "t_h must be greater than t_l.");
-    
+
         int chroma = args[6].AsInt(0);
         validate(chroma < 0 || chroma > 4,
                  "chroma must be set to 0, 1, 2, 3 or 4.");
-    
-        float scale = calc_scale(args[7].AsFloat(255.0));
-    
-        bool is_plus = user_data != nullptr;
 
-        arch_t arch = get_arch(args[8].AsInt(HAS_AVX2), is_plus);
+        float scale = calc_scale(args[7].AsFloat(255.0));
+
+        bool is_plus = env->FunctionExists("Allocate");
+
+        arch_t arch = get_arch(args[8].AsInt(-1), env);
 
         return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
                            args[5].AsBool(false), scale, arch, "TCannyMod",
@@ -320,19 +325,19 @@ static AVSValue __cdecl
 create_gblur(AVSValue args, void* user_data, ise_t* env)
 {
     try {
-        validate(!has_sse2(), "This filter requires SSE2.");
-    
+        validate(!has_avx(env), "This filter requires SSE2.");
+
         float sigma = (float)args[1].AsFloat(0.5);
         validate(sigma < 0.0f, "sigma must be greater than zero.");
-    
+
         int chroma = args[2].AsInt(1);
         validate(chroma < 0 || chroma > 4,
                  "chroma must be set to 0, 1, 2, 3 or 4.");
-    
-        bool is_plus = user_data != nullptr;
 
-        arch_t arch = get_arch(args[3].AsInt(HAS_AVX2), is_plus);
-    
+        bool is_plus = env->FunctionExists("Allocate");
+
+        arch_t arch = get_arch(args[3].AsInt(-1), env);
+
         return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma,
                            false, 1.0f, arch, "GBlur", is_plus);
 
@@ -347,21 +352,21 @@ static AVSValue __cdecl
 create_emask(AVSValue args, void* user_data, ise_t* env)
 {
     try {
-        validate(!has_sse2(), "This filter requires SSE2.");
-    
+        validate(!has_avx(env), "This filter requires SSE2.");
+
         float sigma = (float)args[1].AsFloat(1.5);
         validate(sigma < 0.0f, "sigma must be greater than zero.");
-    
+
         int chroma = args[2].AsInt(0);
         validate(chroma < 0 || chroma > 4,
                  "chroma must be set to 0, 1, 2, 3 or 4.");
-    
-        float scale = calc_scale(args[2].AsFloat(50.0));
-    
-        bool is_plus = user_data != nullptr;
 
-        arch_t arch = get_arch(args[3].AsInt(HAS_AVX2), is_plus);
-    
+        float scale = calc_scale(args[2].AsFloat(50.0));
+
+        bool is_plus = env->FunctionExists("Allocate");
+
+        arch_t arch = get_arch(args[3].AsInt(-1), env);
+
         return new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
                            args[5].AsBool(false), scale, arch, "EMask", is_plus);
 
@@ -372,15 +377,13 @@ create_emask(AVSValue args, void* user_data, ise_t* env)
 }
 
 
-static const AVS_Linkage* AVS_linkage = nullptr;
+const AVS_Linkage* AVS_linkage = nullptr;
 
 
 extern "C" __declspec(dllexport) const char * __stdcall
 AvisynthPluginInit3(ise_t* env, const AVS_Linkage* const vectors)
 {
     AVS_linkage = vectors;
-
-    void* is_plus = env->FunctionExists("SetFilterMTMode") ? "true" : nullptr;
 
     env->AddFunction("TCannyMod",
              /*0*/   "c"
@@ -391,20 +394,13 @@ AvisynthPluginInit3(ise_t* env, const AVS_Linkage* const vectors)
              /*5*/   "[sobel]b"
              /*6*/   "[chroma]i"
              /*7*/   "[gmmax]f"
-             /*8*/   "[opt]i", create_tcannymod, is_plus);
+             /*8*/   "[opt]i", create_tcannymod, nullptr);
 
     env->AddFunction("GBlur", "c[sigma]f[chroma]i[opt]i",
-                     create_gblur, is_plus);
+                     create_gblur, nullptr);
 
     env->AddFunction("EMask", "c[sigma]f[gmmax]f[chroma]i[sobel]b[opt]i",
-                     create_emask, is_plus);
-
-    if (is_plus != nullptr) {
-        auto env2 = static_cast<IScriptEnvironment2*>(env);
-        env2->SetFilterMTMode("TCannyMod", MT_NICE_FILTER, true);
-        env2->SetFilterMTMode("GBlur", MT_NICE_FILTER, true);
-        env2->SetFilterMTMode("EMask", MT_NICE_FILTER, true);
-    }
+                     create_emask, nullptr);
 
     return "Canny edge detection filter for Avisynth2.6/Avisynth+ ver."
         TCANNY_M_VERSION;

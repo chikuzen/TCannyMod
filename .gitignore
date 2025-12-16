@@ -1,9 +1,8 @@
-avisynth/src/Release/*
-avisynth/src/Debug/*
-avisynth/src/x64/*
-avisynth/src/.vs/*
-avisynth/archive/*
-vapoursynth/*
+/avisynth/archive/*
+/avisynth/vs2022/.vs/
+/avisynth/vs2022/TCannyMod/
+/avisynth/vs2022/x64/
+
 *.opensdf
 *.opendb
 *.psess

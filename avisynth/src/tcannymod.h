@@ -33,6 +33,7 @@
 #define NOGDI
 #include <windows.h>
 #include <avisynth.h>
+#include <avs/cpuid.h>
 
 #define TCANNY_M_VERSION "1.3.0"
 
@@ -139,6 +140,10 @@ public:
             bool is_plus);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, ise_t* env);
+    int __stdcall SetCacheHints(int hints, int)
+    {
+        return hints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
+    }
 };
 
 
@@ -159,8 +164,4 @@ hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,
     const size_t bpitch, const int width, const int height,
     const float tmin, const float tmax) noexcept;
 
-extern bool has_sse2();
-extern bool has_sse41();
-extern bool has_avx();
-extern bool has_avx2();
 #endif

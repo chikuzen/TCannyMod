@@ -42,9 +42,9 @@ typedef IScriptEnvironment ise_t;
 
 
 typedef void(__stdcall *gaussian_blur_t)(
-    const int radius, const float* kernel, const float* hkernel, float* buffp,
-    float* blurp, const size_t blur_pitch, const uint8_t* srcp,
-    const size_t src_pitch, const size_t width, const size_t height);
+    const int radius, const float* kernel, float* buffp, float* blurp,
+    const size_t blur_pitch, const uint8_t* srcp, const size_t src_pitch,
+    const size_t width, const size_t height) noexcept;
 
 
 typedef void(__stdcall *edge_detection_t)(
@@ -88,7 +88,7 @@ constexpr size_t GB_MAX_LENGTH = 17;
 
 class Buffers {
     ise_t* env;
-    bool isPlus;
+    bool isV8;
 public:
     uint8_t* orig;
     float* buffp;
@@ -105,7 +105,7 @@ class TCannyM : public GenericVideoFilter {
     const char* name;
     int numPlanes;
     size_t align;
-    bool isPlus;
+    bool isV8;
     int mode;
     int chroma;
     float th_min;
@@ -114,7 +114,8 @@ class TCannyM : public GenericVideoFilter {
     bool calc_dir;
     int gbRadius; // max: 8
     float gbKernel[GB_MAX_LENGTH];
-    float* horizontalKernel;
+    //float* horizontalKernel;
+    //float* verticalKernel;
     Buffers* buff;
     size_t blurPitch;
     size_t emaskPitch;
@@ -142,7 +143,11 @@ public:
     PVideoFrame __stdcall GetFrame(int n, ise_t* env);
     int __stdcall SetCacheHints(int hints, int)
     {
-        return hints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
+        if (isV8) {
+            return hints == CACHE_GET_MTMODE ? MT_NICE_FILTER : 0;
+        } else {
+            return hints == CACHE_GET_MTMODE ? MT_MULTI_INSTANCE : 0;
+        }
     }
 };
 

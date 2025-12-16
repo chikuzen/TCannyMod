@@ -28,30 +28,26 @@
 #include <algorithm>
 #include <stdexcept>
 #include "tcannymod.h"
+#include <avs/alignment.h>
 
 
 
 template <typename T>
 static inline T
-my_malloc(size_t size, size_t align, bool is_plus, AvsAllocType at,
+my_malloc(size_t size, size_t align, bool is_v8, AvsAllocType at,
           ise_t* env) noexcept
 {
-    void* p;
-    if (is_plus) {
-        p = static_cast<IScriptEnvironment2*>(env)->Allocate(size, align, at);
-    } else {
-        p = _aligned_malloc(size, align);
-    }
+    void* p = is_v8 ? env->Allocate(size, align, at) : avs_malloc(size, align);
     return reinterpret_cast<T>(p);
 }
 
 
-static inline void my_free(void* p, bool is_plus, ise_t* env) noexcept
+static inline void my_free(void* p, bool is_v8, ise_t* env) noexcept
 {
-    if (is_plus) {
-        static_cast<IScriptEnvironment2*>(env)->Free(p);
+    if (is_v8) {
+        env->Free(p);
     } else {
-        _aligned_free(p);
+        avs_free(p);
     }
     p = nullptr;
 }
@@ -59,12 +55,13 @@ static inline void my_free(void* p, bool is_plus, ise_t* env) noexcept
 
 Buffers::Buffers(size_t bufsize, size_t blsize, size_t emsize, size_t dirsize,
     size_t hystsize, size_t align, bool ip, ise_t* e) :
-    env(e), isPlus(ip)
+    env(e), isV8(ip)
 {
     size_t total_size = bufsize + blsize + emsize + dirsize + hystsize;
     orig = my_malloc<uint8_t*>(
-        total_size, align, isPlus, AVS_POOLED_ALLOC, env);
+        total_size, align, isV8, AVS_POOLED_ALLOC, env);
 
+    memset(orig, 0, total_size);
     buffp = reinterpret_cast<float*>(orig) + 8;
     blurp = reinterpret_cast<float*>(orig + bufsize + align);
     emaskp = reinterpret_cast<float*>(orig + bufsize + blsize);
@@ -75,7 +72,8 @@ Buffers::Buffers(size_t bufsize, size_t blsize, size_t emsize, size_t dirsize,
 
 Buffers::~Buffers()
 {
-    my_free(orig, isPlus, env);
+    my_free(orig, isV8, env);
+    env = nullptr;
 };
 
 
@@ -104,30 +102,20 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
 
 
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
-                 bool sobel, float s, arch_t arch, const char* n, bool is_plus) :
+                 bool sobel, float s, arch_t arch, const char* n, bool is_v8) :
     GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin), th_max(tmax),
-    chroma(c), name(n), scale(s), isPlus(is_plus), buff(nullptr)
+    chroma(c), name(n), scale(s), isV8(is_v8), buff(nullptr), align(32),
+    calc_dir(true)
 {
     validate(!vi.IsPlanar(), "Planar format only.");
+    memset(gbKernel, 0, sizeof(gbKernel));
 
     numPlanes = (vi.IsY8() || chroma == 0) ? 1 : 3;
-
-    align = (arch < HAS_AVX2) ? 16 : 32;
 
     if (sigma > 0.0f) {
         set_gb_kernel(sigma, gbRadius, gbKernel);
 
         size_t length = (gbRadius * 2 + 1);
-        horizontalKernel = my_malloc<float*>(
-            length * align, align, false, AVS_NORMAL_ALLOC, nullptr);
-        validate(!horizontalKernel, "failed to allocate memory.");
-
-        size_t step = align / sizeof(float);
-        for (size_t i = 0; i < length; ++i) {
-            for (size_t j = 0; j < step; ++j) {
-                horizontalKernel[i * step + j] = gbKernel[i];
-            }
-        }
     }
 
     blurPitch = ((align + (vi.width + 1) * sizeof(float)) + align - 1) & ~(align - 1);
@@ -159,7 +147,7 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
 
     writeEdgeDirection = get_write_edge_direction(arch);
 
-    if (!isPlus) {
+    if (!isV8) {
         buff = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize,
                            align, false, nullptr);
     }
@@ -168,8 +156,7 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
 
 TCannyM::~TCannyM()
 {
-    my_free(horizontalKernel, false, nullptr);
-    if (!isPlus) {
+    if (!isV8) {
         delete buff;
     }
 }
@@ -178,15 +165,19 @@ TCannyM::~TCannyM()
 PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 {
     PVideoFrame src = child->GetFrame(n, env);
-    PVideoFrame dst = env->NewVideoFrame(vi, align);
 
+    PVideoFrame dst;
     Buffers* b = buff;
-    if (isPlus) {
+
+    if (isV8) {
         b = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize, align,
                         true, env);
         if (!b || !b->orig) {
             env->ThrowError("%s: failed to allocate buffer.", name);
         }
+        dst = env->NewVideoFrameP(vi, &src);
+    } else {
+        dst = env->NewVideoFrame(vi, align);
     }
 
     static const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
@@ -210,8 +201,8 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
             continue;
         }
 
-        gaussianBlur(gbRadius, gbKernel, horizontalKernel, b->buffp, b->blurp,
-                     blurPitch, srcp, src_pitch, width, height);
+        gaussianBlur(gbRadius, gbKernel, b->buffp, b->blurp, blurPitch, srcp,
+            src_pitch, width, height);
         if (mode == 4) {
             writeBluredFrame(b->blurp, dstp, width, height, dst_pitch,
                              blurPitch, 1.0);
@@ -247,7 +238,7 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
         env->BitBlt(dstp, dst_pitch, b->hystp, hystPitch, width, height);
     }
 
-    if (isPlus) {
+    if (isV8) {
         delete b;
     }
 
@@ -280,7 +271,15 @@ static float calc_scale(double gmmax) noexcept
 }
 
 
-
+static bool is_v8orgreater(ise_t* env)
+{
+    try {
+        env->CheckVersion(8);
+        return true;
+    } catch (const AvisynthError&) {
+        return false;
+    }
+}
 
 static AVSValue __cdecl
 create_tcannymod(AVSValue args, void* user_data, ise_t* env)
@@ -306,13 +305,13 @@ create_tcannymod(AVSValue args, void* user_data, ise_t* env)
 
         float scale = calc_scale(args[7].AsFloat(255.0));
 
-        bool is_plus = env->FunctionExists("Allocate");
+        bool is_v8 = is_v8orgreater(env);
 
         arch_t arch = get_arch(args[8].AsInt(-1), env);
 
         return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
                            args[5].AsBool(false), scale, arch, "TCannyMod",
-                           is_plus);
+                           is_v8);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("TCannyMod: %s", e.what());
@@ -334,12 +333,12 @@ create_gblur(AVSValue args, void* user_data, ise_t* env)
         validate(chroma < 0 || chroma > 4,
                  "chroma must be set to 0, 1, 2, 3 or 4.");
 
-        bool is_plus = env->FunctionExists("Allocate");
+        bool is_v8 = is_v8orgreater(env);
 
         arch_t arch = get_arch(args[3].AsInt(-1), env);
 
         return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma,
-                           false, 1.0f, arch, "GBlur", is_plus);
+                           false, 1.0f, arch, "GBlur", is_v8);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("GBlur: %s", e.what());
@@ -363,12 +362,12 @@ create_emask(AVSValue args, void* user_data, ise_t* env)
 
         float scale = calc_scale(args[2].AsFloat(50.0));
 
-        bool is_plus = env->FunctionExists("Allocate");
+        bool is_v8 = is_v8orgreater(env);
 
         arch_t arch = get_arch(args[3].AsInt(-1), env);
 
         return new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
-                           args[5].AsBool(false), scale, arch, "EMask", is_plus);
+                           args[5].AsBool(false), scale, arch, "EMask", is_v8);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("EMask: %s", e.what());

@@ -29,7 +29,7 @@
 #include "simd.h"
 
 
-template <typename Vf>
+template <typename Vf, bool USE_CACHE>
 static void __stdcall
 convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
                  const int src_pitch, float* blurp, const size_t blur_pitch) noexcept
@@ -39,14 +39,18 @@ convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
     for (size_t y = 0; y < height; y++) {
         for (size_t x = 0; x < width; x += step) {
             Vf val = cvtu8_ps<Vf>(srcp + x);
-            stream(blurp + x, val);
+            if constexpr (USE_CACHE) {
+                store(blurp + x, val);
+            } else {
+                stream(blurp + x, val);
+            }
         }
         srcp += src_pitch;
         blurp += blur_pitch;
     }
 }
 
-template <typename Vf>
+template <typename Vf, bool USE_CACHE>
 SFINLINE void
 horizontal_blur(const float* kernel, float* buffp, const int radius,
     const size_t width, float* blurp) noexcept
@@ -66,19 +70,23 @@ horizontal_blur(const float* kernel, float* buffp, const int radius,
             Vf val = loadu<Vf>(buffp + x + i);
             sum = madd(k, val, sum);
         }
-        stream(blurp + x, sum);
+        if (USE_CACHE) {
+            store(blurp + x, sum);
+        } else {
+            stream(blurp + x, sum);
+        }
     }
 }
 
 
-template <typename Vf>
+template <typename Vf, bool USE_CACHE>
 static void __stdcall
 gaussian_blur(const int radius, const float* kernel, float* buffp, float* blurp,
     const size_t blur_pitch, const uint8_t* srcp, const size_t src_pitch,
     const size_t width, const size_t height) noexcept
 {
     if (radius == 0) {
-        convert_to_float<Vf>(
+        convert_to_float<Vf, USE_CACHE>(
                 width, height, srcp, src_pitch, blurp, blur_pitch);
         return;
     }
@@ -105,7 +113,7 @@ gaussian_blur(const int radius, const float* kernel, float* buffp, float* blurp,
             }
             store(buffp + x, sum);
         }
-        horizontal_blur<Vf>(kernel, buffp, radius, width, blurp);
+        horizontal_blur<Vf, USE_CACHE>(kernel, buffp, radius, width, blurp);
         blurp += blur_pitch;
 
         for (int l = 0; l < length - 1; ++l) {
@@ -120,10 +128,12 @@ gaussian_blur(const int radius, const float* kernel, float* buffp, float* blurp,
 }
 
 
-gaussian_blur_t get_gaussian_blur(arch_t arch) noexcept
+gaussian_blur_t get_gaussian_blur(bool use_cache, arch_t arch) noexcept
 {
     if (arch == HAS_AVX2) {
-        return gaussian_blur<__m256>;
+        return use_cache ?
+            gaussian_blur<__m256, true> : gaussian_blur<__m256, false>;
     }
-    return gaussian_blur<__m128>;
+    return use_cache ?
+        gaussian_blur<__m128, true> : gaussian_blur<__m128, false>;
 }

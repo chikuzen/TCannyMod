@@ -56,8 +56,47 @@ static const float* get_tangent(int idx) noexcept
     return tangent + 8 * idx;
 }
 
+template <typename Vf, typename Vi, bool USE_CACHE>
+SFINLINE void
+calc_direction(const Vf& gx, const Vf& gy, int32_t* dstp, const float* tan0225,
+    const float* tan0675, const float* tan1125, const float* tan1575) noexcept
+{
+    const Vf z = zero<Vf>();
+    const Vf vertical = set1<Vf, float>(90.0f);
+    // if gy < 0, gx = -gx
+    Vf mask = cmplt_32(gy, z);
+    Vf gx2 = blendv(gx, sub(z, gx), mask);
+    // tan = gy / gx
+    Vf tan = mul(rcp_hq(gx2), abs(gy));
+    // if tan is unorderd(inf or NaN), tan = 90.0f
+    mask = cmpord_ps(tan, tan);
+    tan = blendv(vertical, tan, mask);
+    const Vf t0225 = load<Vf>(tan0225);
+    const Vf t0675 = load<Vf>(tan0675);
+    const Vf t1125 = load<Vf>(tan1125);
+    const Vf t1575 = load<Vf>(tan1575);
+    // if t1575 <= tan < t0225, direction is 31 (horizontal)
+    Vi d0 = cast<Vi, Vf>(_and(cmpge_32(tan, t1575), cmplt_32(tan, t0225)));
+    d0 = srli_i32(d0, 27);
+    // if t0225 <= tan < t0675, direction is 63 (45' up)
+    Vi d1 = cast<Vi, Vf>(_and(cmpge_32(tan, t0225), cmplt_32(tan, t0675)));
+    d1 = srli_i32(d1, 26);
+    // if t0675 <= tan or tan < t1125, direction is 127 (vertical)
+    Vi d2 = cast<Vi, Vf>(_or(cmpge_32(tan, t0675), cmplt_32(tan, t1125)));
+    d2 = srli_i32(d2, 25);
+    // if t1125 <= tan < t1575, direction is 255 (45' down)
+    Vi d3 = cast<Vi, Vf>(_and(cmpge_32(tan, t1125), cmplt_32(tan, t1575)));
+    d3 = srli_i32(d3, 24);
+    d0 = _or(_or(d0, d1), _or(d2, d3));
+    if constexpr(USE_CACHE) {
+        store(dstp, d0);
+    } else {
+        stream(dstp, d0);
+    }
 
-template <typename Vf, typename Vi, bool CALC_DIR>
+}
+
+template <typename Vf, typename Vi, bool CALC_DIRECTION, bool USE_CACHE>
 static void __stdcall
 standard(float* blurp, const size_t blur_pitch, float* emaskp,
          const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
@@ -83,41 +122,19 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
             Vf gy = sub(load<Vf>(p0 + x), load<Vf>(p2 + x)); // [1, 0, -1]
             Vf gx = sub(loadu<Vf>(p1 + x + 1), loadu<Vf>(p1 + x - 1)); // [-1, 0, 1]
 
-            if (CALC_DIR) {
-                const Vf z = zero<Vf>();
-                const Vf vertical = set1<Vf, float>(90.0f);
-                // if gy < 0, gx = -gx
-                Vf mask = cmplt_32(gy, z);
-                Vf gx2 = blendv(gx, sub(z, gx), mask);
-                // tan = gy / gx
-                Vf tan = mul(rcp_hq(gx2), abs(gy));
-                // if tan is unorderd(inf or NaN), tan = 90.0f
-                mask = cmpord_ps(tan, tan);
-                tan = blendv(vertical, tan, mask);
-                const Vf t0225 = load<Vf>(tan0225);
-                const Vf t0675 = load<Vf>(tan0675);
-                const Vf t1125 = load<Vf>(tan1125);
-                const Vf t1575 = load<Vf>(tan1575);
-                // if t1575 <= tan < t0225, direction is 31 (horizontal)
-                Vi d0 = cast<Vi, Vf>(_and(cmpge_32(tan, t1575), cmplt_32(tan, t0225)));
-                d0 = srli_i32(d0, 27);
-                // if t0225 <= tan < t0675, direction is 63 (45' up)
-                Vi d1 = cast<Vi, Vf>(_and(cmpge_32(tan, t0225), cmplt_32(tan, t0675)));
-                d1 = srli_i32(d1, 26);
-                // if t0675 <= tan or tan < t1125, direction is 127 (vertical)
-                Vi d2 = cast<Vi, Vf>(_or(cmpge_32(tan, t0675), cmplt_32(tan, t1125)));
-                d2 = srli_i32(d2, 25);
-                // if t1125 <= tan < t1575, direction is 255 (45' down)
-                Vi d3 = cast<Vi, Vf>(_and(cmpge_32(tan, t1125), cmplt_32(tan, t1575)));
-                d3 = srli_i32(d3, 24);
-                d0 = _or(_or(d0, d1), _or(d2, d3));
-                stream(dirp + x, d0);
+            if constexpr (CALC_DIRECTION) {
+                calc_direction<Vf, Vi, USE_CACHE>(gx, gy, dirp + x, tan0225, tan0675, tan1125, tan1575);
             }
 
             Vf magnitude = mul(gx, gx);
             magnitude = madd(gy, gy, magnitude);
             magnitude = sqrt(magnitude);
-            stream(emaskp + x, magnitude);
+            if constexpr (USE_CACHE) {
+                store(emaskp + x, magnitude);
+            } else {
+                stream(emaskp + x, magnitude);
+            }
+
         }
         emaskp += emask_pitch;
         dirp += dir_pitch;
@@ -139,7 +156,7 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
           0,  0,  0,    -> p1
          -1, -2, -1]    -> p2
 */
-template <typename Vf, typename Vi, bool CALC_DIR>
+template <typename Vf, typename Vi, bool CALC_DIRECTION, bool USE_CACHE>
 static void __stdcall
 sobel(float* blurp, const size_t blur_pitch, float* emaskp,
       const size_t emask_pitch, int32_t* dirp, const size_t dir_pitch,
@@ -164,9 +181,12 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
         p2[width] = p2[width - 1];
 
         for (size_t x = 0; x < width; x += step) {
-            Vf gx = sub(loadu<Vf>(p0 + x + 1), loadu<Vf>(p2 + x - 1));
+            Vf t = loadu<Vf>(p0 + x + 1);
+            Vf gx = t;
+            t = loadu<Vf>(p2 + x - 1);
+            gx = sub(gx, t);
             Vf gy = gx;
-            Vf t = loadu<Vf>(p0 + x - 1);
+            t = loadu<Vf>(p0 + x - 1);
             gx = sub(gx, t);
             gy = add(gy, t);
             t = loadu<Vf>(p2 + x + 1);
@@ -181,34 +201,19 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
             t = load<Vf>(p2 + x);
             gy = sub(gy, add(t, t));
 
-            if (CALC_DIR) {
-                const Vf z = zero<Vf>();
-                const Vf vertical = set1<Vf, float>(90.0f);
-                Vf mask = cmplt_32(gy, z);
-                Vf gx2 = blendv(gx, sub(z, gx), mask);
-                Vf tan = mul(rcp_hq(gx2), abs(gy));
-                mask = cmpord_ps(tan, tan);
-                tan = blendv(vertical, tan, mask);
-                const Vf t0225 = load<Vf>(tan0225);
-                const Vf t0675 = load<Vf>(tan0675);
-                const Vf t1125 = load<Vf>(tan1125);
-                const Vf t1575 = load<Vf>(tan1575);
-                Vi d0 = cast<Vi, Vf>(_and(cmpge_32(tan, t1575), cmplt_32(tan, t0225)));
-                d0 = srli_i32(d0, 27);
-                Vi d1 = cast<Vi, Vf>(_and(cmpge_32(tan, t0225), cmplt_32(tan, t0675)));
-                d1 = srli_i32(d1, 26);
-                Vi d2 = cast<Vi, Vf>(_or(cmpge_32(tan, t0675), cmplt_32(tan, t1125)));
-                d2 = srli_i32(d2, 25);
-                Vi d3 = cast<Vi, Vf>(_and(cmpge_32(tan, t1125), cmplt_32(tan, t1575)));
-                d3 = srli_i32(d3, 24);
-                d0 = _or(_or(d0, d1), _or(d2, d3));
-                stream(dirp + x, d0);
+            if constexpr (CALC_DIRECTION) {
+                calc_direction<Vf, Vi, USE_CACHE>(gx, gy, dirp, tan0225, tan0675, tan1125, tan1575);
             }
 
             Vf magnitude = mul(gx, gx);
             magnitude = madd(gy, gy, magnitude);
             magnitude = sqrt(magnitude);
-            stream(emaskp + x, magnitude);
+            if constexpr (USE_CACHE) {
+                store(emaskp + x, magnitude);
+            } else {
+                stream(emaskp + x, magnitude);
+            }
+
         }
         emaskp += emask_pitch;
         dirp += dir_pitch;
@@ -279,35 +284,37 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
 
 
 edge_detection_t
-get_edge_detection(bool use_sobel, bool calc_dir, arch_t arch) noexcept
+get_edge_detection(bool use_sobel, bool calc_dir, bool use_cache, arch_t arch) noexcept
 {
     using std::make_tuple;
-    std::map<std::tuple<bool, bool, arch_t>, edge_detection_t> func;
+    std::map<std::tuple<bool, bool, bool, arch_t>, edge_detection_t> func;
 
-    func[make_tuple(false, false, HAS_SSE2)] = standard<__m128, __m128i, false>;
-    func[make_tuple(false, true, HAS_SSE2)] = standard<__m128, __m128i, true>;
-    func[make_tuple(true, false, HAS_SSE2)] = sobel<__m128, __m128i, false>;
-    func[make_tuple(true, true, HAS_SSE2)] = sobel<__m128, __m128i, true>;
-#if defined(__AVX2__)
-    func[make_tuple(false, false, HAS_AVX2)] = standard<__m256, __m256i, false>;
-    func[make_tuple(false, true, HAS_AVX2)] = standard<__m256, __m256i, true>;
-    func[make_tuple(true, false, HAS_AVX2)] = sobel<__m256, __m256i, false>;
-    func[make_tuple(true, true, HAS_AVX2)] = sobel<__m256, __m256i, true>;
-#endif
+    func[make_tuple(false, false, false, HAS_SSE41)] = standard<__m128, __m128i, false, false>;
+    func[make_tuple(false, true, false, HAS_SSE41)] = standard<__m128, __m128i, true, false>;
+    func[make_tuple(true, false, false, HAS_SSE41)] = sobel<__m128, __m128i, false, false>;
+    func[make_tuple(true, true, false, HAS_SSE41)] = sobel<__m128, __m128i, true, false>;
+    func[make_tuple(false, false, true, HAS_SSE41)] = standard<__m128, __m128i, false, true>;
+    func[make_tuple(false, true, true, HAS_SSE41)] = standard<__m128, __m128i, true, true>;
+    func[make_tuple(true, false, true, HAS_SSE41)] = sobel<__m128, __m128i, false, true>;
+    func[make_tuple(true, true, true, HAS_SSE41)] = sobel<__m128, __m128i, true, true>;
+    func[make_tuple(false, false, false, HAS_AVX2)] = standard<__m256, __m256i, false, false>;
+    func[make_tuple(false, true, false, HAS_AVX2)] = standard<__m256, __m256i, true, false>;
+    func[make_tuple(true, false, false, HAS_AVX2)] = sobel<__m256, __m256i, false, false>;
+    func[make_tuple(true, true, false, HAS_AVX2)] = sobel<__m256, __m256i, true, false>;
+    func[make_tuple(false, false, true, HAS_AVX2)] = standard<__m256, __m256i, false, true>;
+    func[make_tuple(false, true, true, HAS_AVX2)] = standard<__m256, __m256i, true, true>;
+    func[make_tuple(true, false, true, HAS_AVX2)] = sobel<__m256, __m256i, false, true>;
+    func[make_tuple(true, true, true, HAS_AVX2)] = sobel<__m256, __m256i, true, true>;
 
-    arch_t a = arch == HAS_SSE41 ? HAS_SSE2 : arch;
-
-    return func[make_tuple(use_sobel, calc_dir, a)];
+    return func[make_tuple(use_sobel, calc_dir, use_cache, arch)];
 }
 
 
 non_max_suppress_t get_non_max_suppress(arch_t arch) noexcept
 {
-#if defined(__AVX2__)
     if (arch == HAS_AVX2) {
         return non_max_suppress<__m256, __m256i>;
     }
-#endif
     return non_max_suppress<__m128, __m128i>;
 }
 

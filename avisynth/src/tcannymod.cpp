@@ -28,7 +28,7 @@
 #include <stdexcept>
 #include "tcannymod.h"
 #include <avs/alignment.h>
-
+#include "cpu_check.h"
 
 
 template <typename T>
@@ -101,15 +101,15 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
 
 
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
-                 bool sobel, float s, arch_t arch, const char* n, bool is_v8) :
+    bool sobel, float s, arch_t arch, const char* n, bool is_v8, bool use_cache) :
     GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin), th_max(tmax),
-    chroma(c), name(n), scale(s), isV8(is_v8), buff(nullptr), align(32),
-    calc_dir(true)
+    chroma(c), name(n), scale(s), isV8(is_v8), buff(nullptr), calc_dir(true)
 {
     validate(!vi.IsPlanar(), "Planar format only.");
     memset(gbKernel, 0, sizeof(gbKernel));
 
     numPlanes = (vi.IsY8() || chroma == 0) ? 1 : 3;
+    align = arch == HAS_AVX512 ? 64 : 32;
 
     if (sigma > 0.0f) {
         set_gb_kernel(sigma, gbRadius, gbKernel);
@@ -132,19 +132,20 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
     emaskPitch /= sizeof(float);
     dirPitch /= sizeof(int32_t);
 
-    gaussianBlur = get_gaussian_blur(arch);
+    gaussianBlur = get_gaussian_blur(use_cache, arch);
 
-    edgeDetection = get_edge_detection(sobel, (mode != 1 && mode != 4), arch);
+    bool calc_dir = mode != 1 && mode != 4;
+    edgeDetection = get_edge_detection(sobel, calc_dir, use_cache, arch);
 
     nonMaximumSuppression = get_non_max_suppress(arch);
 
-    writeBluredFrame = get_write_gradient_mask(false, arch);
+    writeBluredFrame = get_write_gradient_mask(false, use_cache, arch);
 
-    writeGradientMask = get_write_gradient_mask(scale != 1.0f, arch);
+    writeGradientMask = get_write_gradient_mask(scale != 1.0f, use_cache, arch);
 
-    writeGradientDirection = get_write_gradient_direction(arch);
+    writeGradientDirection = get_write_gradient_direction(use_cache, arch);
 
-    writeEdgeDirection = get_write_edge_direction(arch);
+    writeEdgeDirection = get_write_edge_direction(use_cache, arch);
 
     if (!isV8) {
         buff = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize,
@@ -253,14 +254,14 @@ static inline bool has_avx(ise_t* env) noexcept
 
 static arch_t get_arch(int opt, ise_t* env) noexcept
 {
-    auto f = env->GetCPUFlags();
     if (opt == 0 || opt == 1) {
         return HAS_SSE41;
     }
-    if (f & (CPUF_AVX2 | CPUF_FMA3))
+    if (opt == 2 && has_avx2()) {
         return HAS_AVX2;
-    else
-        return HAS_SSE41;
+    }
+    //return has_avx512() ? HAS_AVX512 : HAS_AVX2;
+    return HAS_AVX2;
 }
 
 
@@ -284,7 +285,7 @@ static AVSValue __cdecl
 create_tcannymod(AVSValue args, void* user_data, ise_t* env)
 {
     try {
-        validate(!has_avx(env), "This filter requires AVX.");
+        validate(!has_avx(), "This filter requires AVX.");
 
         int mode = args[1].AsInt(0);
         validate(mode < 0 || mode > 4, "mode must be between 0 and 4.");
@@ -304,13 +305,17 @@ create_tcannymod(AVSValue args, void* user_data, ise_t* env)
 
         float scale = calc_scale(args[7].AsFloat(255.0));
 
+        arch_t arch = get_arch(args[8].AsInt(-1), env);
+
+        bool cache = args[9].AsBool(false);
+
         bool is_v8 = is_v8orgreater(env);
 
-        arch_t arch = get_arch(args[8].AsInt(-1), env);
+
 
         return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
                            args[5].AsBool(false), scale, arch, "TCannyMod",
-                           is_v8);
+                           is_v8, cache);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("TCannyMod: %s", e.what());
@@ -323,7 +328,7 @@ static AVSValue __cdecl
 create_gblur(AVSValue args, void* user_data, ise_t* env)
 {
     try {
-        validate(!has_avx(env), "This filter requires SSE2.");
+        validate(!has_avx(), "This filter requires AVX.");
 
         float sigma = (float)args[1].AsFloat(0.5);
         validate(sigma < 0.0f, "sigma must be greater than zero.");
@@ -332,12 +337,14 @@ create_gblur(AVSValue args, void* user_data, ise_t* env)
         validate(chroma < 0 || chroma > 4,
                  "chroma must be set to 0, 1, 2, 3 or 4.");
 
-        bool is_v8 = is_v8orgreater(env);
-
         arch_t arch = get_arch(args[3].AsInt(-1), env);
 
+        bool cache = args[4].AsBool(false);
+
+        bool is_v8 = is_v8orgreater(env);
+
         return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma,
-                           false, 1.0f, arch, "GBlur", is_v8);
+                           false, 1.0f, arch, "GBlur", is_v8, cache);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("GBlur: %s", e.what());
@@ -350,23 +357,27 @@ static AVSValue __cdecl
 create_emask(AVSValue args, void* user_data, ise_t* env)
 {
     try {
-        validate(!has_avx(env), "This filter requires SSE2.");
+        validate(!has_avx(), "This filter requires AVX.");
 
         float sigma = (float)args[1].AsFloat(1.5);
         validate(sigma < 0.0f, "sigma must be greater than zero.");
 
-        int chroma = args[2].AsInt(0);
-        validate(chroma < 0 || chroma > 4,
-                 "chroma must be set to 0, 1, 2, 3 or 4.");
-
         float scale = calc_scale(args[2].AsFloat(50.0));
+
+        int chroma = args[3].AsInt(0);
+        validate(chroma < 0 || chroma > 4,
+            "chroma must be set to 0, 1, 2, 3 or 4.");
+
+        bool sobel = args[4].AsBool(false);
+
+        arch_t arch = get_arch(args[5].AsInt(-1), env);
+
+        bool cache = args[6].AsBool(true);
 
         bool is_v8 = is_v8orgreater(env);
 
-        arch_t arch = get_arch(args[3].AsInt(-1), env);
-
         return new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
-                           args[5].AsBool(false), scale, arch, "EMask", is_v8);
+                           sobel, scale, arch, "EMask", is_v8, cache);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("EMask: %s", e.what());
@@ -392,13 +403,24 @@ AvisynthPluginInit3(ise_t* env, const AVS_Linkage* const vectors)
              /*5*/   "[sobel]b"
              /*6*/   "[chroma]i"
              /*7*/   "[gmmax]f"
-             /*8*/   "[opt]i", create_tcannymod, nullptr);
+             /*8*/   "[opt]i"
+             /*9*/   "[use_cache]b", create_tcannymod, nullptr);
 
-    env->AddFunction("GBlur", "c[sigma]f[chroma]i[opt]i",
-                     create_gblur, nullptr);
+    env->AddFunction("GBlur",
+             /*0*/   "c"
+             /*1*/   "[sigma]f"
+             /*2*/   "[chroma]i"
+             /*3*/   "[opt]i"
+             /*4*/   "[use_cache]b", create_gblur, nullptr);
 
-    env->AddFunction("EMask", "c[sigma]f[gmmax]f[chroma]i[sobel]b[opt]i",
-                     create_emask, nullptr);
+    env->AddFunction("EMask",
+             /*0*/   "c"
+             /*1*/   "[sigma]f"
+             /*2*/   "[gmmax]f"
+             /*3*/   "[chroma]i"
+             /*4*/   "[sobel]b"
+             /*5*/   "[opt]i"
+             /*6*/   "[use_cache]b", create_emask, nullptr);
 
     return "Canny edge detection filter for Avisynth2.6/Avisynth+ ver."
         TCANNY_M_VERSION;

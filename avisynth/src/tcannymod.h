@@ -138,7 +138,7 @@ class TCannyM : public GenericVideoFilter {
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
             int chroma, bool sobel, float scale, arch_t arch, const char* name,
-            bool is_plus);
+            bool is_plus, bool use_cache);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, ise_t* env);
     int __stdcall SetCacheHints(int hints, int)
@@ -152,17 +152,21 @@ public:
 };
 
 
-gaussian_blur_t get_gaussian_blur(arch_t arch) noexcept;
+gaussian_blur_t get_gaussian_blur(bool use_cache, arch_t arch) noexcept;
 
-edge_detection_t get_edge_detection(bool use_sobel, bool calc_dir, arch_t arch) noexcept;
+edge_detection_t
+get_edge_detection(bool use_sobel, bool calc_dir, bool use_cache, arch_t arch) noexcept;
 
 non_max_suppress_t get_non_max_suppress(arch_t arch) noexcept;
 
-write_gradient_mask_t get_write_gradient_mask(bool scale, arch_t arch) noexcept;
+write_gradient_mask_t
+get_write_gradient_mask(bool scale, bool use_cache, arch_t arch) noexcept;
 
-write_gradient_direction_t get_write_gradient_direction(arch_t arch) noexcept;
+write_gradient_direction_t
+get_write_gradient_direction(bool use_cache, arch_t arch) noexcept;
 
-write_edge_direction_t get_write_edge_direction(arch_t arch) noexcept;
+write_edge_direction_t
+get_write_edge_direction(bool use_cache, arch_t arch) noexcept;
 
 void __stdcall
 hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,

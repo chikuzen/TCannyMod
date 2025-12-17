@@ -29,7 +29,7 @@
 #include "simd.h"
 
 
-template <typename Vf, typename Vi, bool SCALE>
+template <typename Vf, typename Vi, bool SCALE, bool USE_CACHE>
 static void __stdcall
 write_gradient_mask(const float* srcp, uint8_t* dstp, const size_t width,
                     const size_t height, const size_t dst_pitch,
@@ -58,7 +58,12 @@ write_gradient_mask(const float* srcp, uint8_t* dstp, const size_t width,
             Vi x3 = cvtps_i32<Vi, Vf>(f3);
 
             Vi ret = cvti32_u8(x0, x1, x2, x3);
-            stream(dstp + x, ret);
+
+            if constexpr (USE_CACHE) {
+                store(dstp + x, ret);
+            } else {
+                stream(dstp + x, ret);
+            }
         }
         srcp += src_pitch;
         dstp += dst_pitch;
@@ -66,7 +71,7 @@ write_gradient_mask(const float* srcp, uint8_t* dstp, const size_t width,
 }
 
 
-template <typename Vi>
+template <typename Vi, bool USE_CACHE>
 static void __stdcall
 write_gradient_direction(const int32_t* dirp, uint8_t* dstp,
                          const size_t dir_pitch, const size_t dst_pitch,
@@ -82,7 +87,11 @@ write_gradient_direction(const int32_t* dirp, uint8_t* dstp,
             Vi x2 = load<Vi>(dirp + x + step * 2);
             Vi x3 = load<Vi>(dirp + x + step * 3);
             Vi dst = cvti32_u8(x0, x1, x2, x3);
-            stream(dstp + x, dst);
+            if constexpr (USE_CACHE) {
+                store(dstp + x, dst);
+            } else {
+                stream(dstp + x, dst);
+            }
         }
         dirp += dir_pitch;
         dstp += dst_pitch;
@@ -90,7 +99,7 @@ write_gradient_direction(const int32_t* dirp, uint8_t* dstp,
 }
 
 
-template <typename Vi>
+template <typename Vi, bool USE_CACHE>
 static void __stdcall
 write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
                      const size_t dir_pitch, const size_t hyst_pitch,
@@ -109,7 +118,12 @@ write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
             const Vi dir = cvti32_u8(x0, x1, x2, x3);
             const Vi hyst = load<Vi>(hystp + x);
             const Vi dst = _and(dir, hyst);
-            stream(dstp + x, dst);
+
+            if constexpr (USE_CACHE) {
+                store(dstp + x, dst);
+            } else {
+                stream(dstp + x, dst);
+            }
         }
         dirp += dir_pitch;
         hystp += hyst_pitch;
@@ -118,37 +132,56 @@ write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
 }
 
 
-write_gradient_mask_t get_write_gradient_mask(bool scale, arch_t arch) noexcept
+write_gradient_mask_t
+get_write_gradient_mask(bool scale, bool use_cache, arch_t arch) noexcept
 {
-#if defined(__AVX2__)
-    if (arch == HAS_AVX2) {
-        return scale ? write_gradient_mask<__m256, __m256i, true>
-            : write_gradient_mask<__m256, __m256i, false>;
+    if (arch == HAS_SSE41) {
+        if (scale) {
+            return use_cache ?
+                write_gradient_mask<__m128, __m128i, true, true> :
+                write_gradient_mask<__m128, __m128i, true, false>;
+        } else {
+            return use_cache ?
+                write_gradient_mask<__m128, __m128i, false, true> :
+                write_gradient_mask<__m128, __m128i, false, false>;
+        }
+    } else {
+        if (scale) {
+            return use_cache ?
+                write_gradient_mask<__m256, __m256i, true, true> :
+                write_gradient_mask<__m256, __m256i, true, false>;
+        } else {
+            return use_cache ?
+                write_gradient_mask<__m256, __m256i, false, true> :
+                write_gradient_mask<__m256, __m256i, false, false>;
+        }
     }
-#endif
-    return scale ? write_gradient_mask<__m128, __m128i, true>
-        : write_gradient_mask<__m128, __m128i, false>;
-
 }
 
-
-write_gradient_direction_t get_write_gradient_direction(arch_t arch) noexcept
+write_gradient_direction_t
+get_write_gradient_direction(bool use_cache, arch_t arch) noexcept
 {
-#if defined(__AVX2__)
-    if (arch == HAS_AVX2) {
-        return write_gradient_direction<__m256i>;
+    if (arch == HAS_SSE41) {
+        return use_cache ?
+            write_gradient_direction<__m128i, true> :
+            write_gradient_direction<__m128i, false>;
+    } else {
+        return use_cache ?
+            write_gradient_direction<__m256i, true> :
+            write_gradient_direction<__m256i, false>;
     }
-#endif
-    return write_gradient_direction<__m128i>;
 }
 
-write_edge_direction_t get_write_edge_direction(arch_t arch) noexcept
+write_edge_direction_t
+get_write_edge_direction(bool use_cache, arch_t arch) noexcept
 {
-#if defined(__AVX2__)
-    if (arch == HAS_AVX2) {
-        return write_edge_direction<__m256i>;
+    if (arch == HAS_SSE41) {
+        return use_cache ?
+            write_edge_direction<__m128i, true> :
+            write_edge_direction<__m128i, false>;
+    } else {
+        return use_cache ?
+            write_edge_direction<__m256i, true> :
+            write_edge_direction<__m256i, false>;
     }
-#endif
-    return write_edge_direction<__m128i>;
-
 }

@@ -128,7 +128,7 @@
       <FloatingPointModel>Fast</FloatingPointModel>
       <Optimization>MaxSpeed</Optimization>
       <StringPooling>true</StringPooling>
-      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard>stdcpp23</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <DisableLanguageExtensions>false</DisableLanguageExtensions>
     </ClCompile>
@@ -148,6 +148,7 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\cpu_check.cpp" />
     <ClCompile Include="..\src\edge_detection.cpp" />
     <ClCompile Include="..\src\gaussian_blur.cpp" />
     <ClCompile Include="..\src\hysteresis.cpp" />
@@ -155,6 +156,7 @@
     <ClCompile Include="..\src\write_frame.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\src\cpu_check.h" />
     <ClInclude Include="..\src\simd.h" />
     <ClInclude Include="..\src\tcannymod.h" />
   </ItemGroup>

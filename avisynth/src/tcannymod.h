@@ -33,7 +33,6 @@
 #define NOGDI
 #include <windows.h>
 #include <avisynth.h>
-#include <avs/cpuid.h>
 
 #define TCANNY_M_VERSION "1.3.0"
 
@@ -80,6 +79,7 @@ enum arch_t {
     HAS_SSE2,
     HAS_SSE41,
     HAS_AVX2,
+    HAS_AVX512,
 };
 
 

@@ -25,6 +25,9 @@
 
 
 #include <cstdint>
+#include <algorithm>
+#include <unordered_map>
+#include <format>
 #include "tcannymod.h"
 #include "simd.h"
 
@@ -51,23 +54,23 @@ convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
 }
 
 template <typename Vf, bool USE_CACHE>
-SFINLINE void
-horizontal_blur(const float* kernel, float* buffp, const int radius,
+static void
+horizontal_blur(const float* kernel, float* gbtp, const int radius,
     const size_t width, float* blurp) noexcept
 {
     constexpr size_t step = sizeof(Vf) / sizeof(float);
     const int length = radius * 2 + 1;
 
     for (int i = 1; i <= radius; ++i) {
-        buffp[-i] = buffp[i - 1];
-        buffp[width - 1 + i] = buffp[width - i];
+        gbtp[-i] = gbtp[i - 1];
+        gbtp[width - 1 + i] = gbtp[width - i];
     }
 
     for (size_t x = 0; x < width; x += step) {
         Vf sum = zero<Vf>();
         for (int i = -radius; i <= radius; ++i) {
             Vf k = set1<Vf, float>(kernel[i + radius]);
-            Vf val = loadu<Vf>(buffp + x + i);
+            Vf val = loadu<Vf>(gbtp + x + i);
             sum = madd(k, val, sum);
         }
         if (USE_CACHE) {
@@ -79,61 +82,139 @@ horizontal_blur(const float* kernel, float* buffp, const int radius,
 }
 
 
-template <typename Vf, bool USE_CACHE>
+template <typename Vf, int RADIUS, bool USE_CACHE>
 static void __stdcall
-gaussian_blur(const int radius, const float* kernel, float* buffp, float* blurp,
-    const size_t blur_pitch, const uint8_t* srcp, const size_t src_pitch,
-    const size_t width, const size_t height) noexcept
+gaussian_blur(const int radius, const float* kernel, float* gbtp,
+    const size_t gbt_pitch, float* blurp, const size_t blur_pitch,
+    const uint8_t* srcp, const size_t src_pitch, const size_t width,
+    const size_t height)
 {
-    if (radius == 0) {
+    if constexpr (RADIUS == 0) {
         convert_to_float<Vf, USE_CACHE>(
                 width, height, srcp, src_pitch, blurp, blur_pitch);
         return;
-    }
+    } else {
 
-    constexpr size_t align = sizeof(Vf);
-    constexpr size_t step = align / sizeof(float);
-    const int length = radius * 2 + 1;
+        constexpr size_t align = sizeof(Vf);
+        constexpr size_t step = align / sizeof(float);
+        const int length = radius * 2 + 1;
 
-    const uint8_t* p[GB_MAX_LENGTH];
-    p[radius] = srcp;
-    for (int r = 1; r <= radius; ++r) {
-        p[radius + r] = srcp + r * src_pitch;
-        p[radius - r] = p[radius + r - 1];
-    }
+        const uint8_t* p[GB_MAX_LENGTH + 3];
+        p[radius] = srcp;
+        for (int r = 1; r <= radius; ++r) {
+            p[radius + r] = srcp + r * src_pitch;
+            p[radius - r] = p[radius + r - 1];
+        }
+        p[length] = srcp + src_pitch * (radius + 1);
+        p[length + 1] = srcp + src_pitch * (radius + 2);
+        p[length + 2] = srcp + src_pitch * (radius + 3);
 
-    for (size_t y = 0; y < height; y++) {
-        for (size_t x = 0; x < width; x += step) {
-            Vf sum = zero<Vf>();
+        for (size_t y = 0; y < height; y += RADIUS + 2) {
+            for (size_t x = 0; x < width; x += step) {
+                Vf input = cvtu8_ps<Vf>(p[0] + x);
+                Vf k0 = set1<Vf, float>(kernel[0]);
+                Vf sum0 = mul(input, k0);
 
-            for (int l = 0; l < length; ++l) {
-                Vf input = cvtu8_ps<Vf>(p[l] + x);
-                Vf k = set1<Vf, float>(kernel[l]);
-                sum = madd(k, input, sum);
+                input = cvtu8_ps<Vf>(p[1] + x);
+                Vf k1 = set1<Vf, float>(kernel[1]);
+                sum0 = madd(input, k1, sum0);
+                Vf sum1 = mul(input, k0);
+
+                input = cvtu8_ps<Vf>(p[2] + x);
+                Vf k2 = set1<Vf, float>(kernel[2]);
+                sum0 = madd(input, k2, sum0);
+                sum1 = madd(input, k1, sum1);
+                Vf sum2 = mul(input, k0);
+
+                if constexpr (RADIUS == 1) {
+                    input = cvtu8_ps<Vf>(p[3] + x);
+                    sum1 = madd(input, k2, sum1);
+                    sum2 = madd(input, k1, sum2);
+                    input = cvtu8_ps<Vf>(p[4] + x);
+                    sum2 = madd(input, k2, sum2);
+                    store(gbtp + x, sum0);
+                    store(gbtp + x + gbt_pitch, sum1);
+                    store(gbtp + x + gbt_pitch * 2, sum2);
+
+                } else {
+                    input = cvtu8_ps<Vf>(p[3] + x);
+                    Vf k3 = set1<Vf, float>(kernel[3]);
+                    sum0 = madd(input, k3, sum0);
+                    sum1 = madd(input, k2, sum1);
+                    sum2 = madd(input, k1, sum2);
+                    Vf sum3 = mul(input, k0);
+
+                    for (int l = 4; l < length; ++l) {
+                        k0 = k1;
+                        k1 = k2;
+                        k2 = k3;
+                        k3 = set1<Vf, float>(kernel[l]);
+                        input = cvtu8_ps<Vf>(p[l] + x);
+                        sum0 = madd(input, k3, sum0);
+                        sum1 = madd(input, k2, sum1);
+                        sum2 = madd(input, k1, sum2);
+                        sum3 = madd(input, k0, sum3);
+                    }
+                    input = cvtu8_ps<Vf>(p[length] + x);
+                    sum1 = madd(input, k3, sum1);
+                    sum2 = madd(input, k2, sum2);
+                    sum3 = madd(input, k1, sum3);
+                    input = cvtu8_ps<Vf>(p[length + 1] + x);
+                    sum2 = madd(input, k3, sum2);
+                    sum3 = madd(input, k2, sum3);
+                    input = cvtu8_ps<Vf>(p[length + 2] + x);
+                    sum3 = madd(input, k3, sum3);
+                    store(gbtp + x, sum0);
+                    store(gbtp + x + gbt_pitch, sum1);
+                    store(gbtp + x + gbt_pitch * 2, sum2);
+                    store(gbtp + x + gbt_pitch * 3, sum3);
+                }
             }
-            store(buffp + x, sum);
-        }
-        horizontal_blur<Vf, USE_CACHE>(kernel, buffp, radius, width, blurp);
-        blurp += blur_pitch;
-
-        for (int l = 0; l < length - 1; ++l) {
-            p[l] = p[l + 1];
-        }
-        if (y < height - 1 - radius) {
-            p[length - 1] += src_pitch;
-        } else if (y > height - 1 - radius) {
-            p[length - 1] -= src_pitch;
+            horizontal_blur<Vf, USE_CACHE>(kernel, gbtp, radius, width, blurp);
+            horizontal_blur<Vf, USE_CACHE>(kernel, gbtp + gbt_pitch, radius,
+                width, blurp + blur_pitch);
+            horizontal_blur<Vf, USE_CACHE>(kernel, gbtp + 2 * gbt_pitch, radius,
+                width, blurp + 2 * blur_pitch);
+            if (RADIUS > 1) {
+                horizontal_blur<Vf, USE_CACHE>(kernel, gbtp + 3 * gbt_pitch, radius,
+                    width, blurp + 3 * blur_pitch);
+            }
+            blurp += blur_pitch * (RADIUS + 2);
+            for (int i = 0; i < RADIUS + 2; ++i) {
+                for (int l = 0; l < length + 2; ++l) {
+                    p[l] = p[l + 1];
+                }
+                if (y < height - 1 - radius) {
+                    p[length + 2] += src_pitch;
+                } else if (y > height - 1 - radius) {
+                    p[length + 2] -= src_pitch;
+                }
+            }
         }
     }
 }
 
 
-gaussian_blur_t get_gaussian_blur(bool use_cache, arch_t arch) noexcept
+gaussian_blur_t get_gaussian_blur(int radius, bool use_cache, arch_t arch) noexcept
 {
-    if (arch == HAS_AVX2) {
-        return use_cache ?
-            gaussian_blur<__m256, true> : gaussian_blur<__m256, false>;
-    }
-    return use_cache ?
-        gaussian_blur<__m128, true> : gaussian_blur<__m128, false>;
+    using std::format;
+
+    int R = std::min(radius, 2);
+    int A = arch == HAS_SSE41 ? 0 : 1;
+
+    std::unordered_map<std::string, gaussian_blur_t> func;
+    func[format("{}{}{}", 0, false, 0)] = gaussian_blur<__m128, 0, false>;
+    func[format("{}{}{}", 1, false, 0)] = gaussian_blur<__m128, 1, false>;
+    func[format("{}{}{}", 2, false, 0)] = gaussian_blur<__m128, 2, false>;
+    func[format("{}{}{}", 0, true, 0)] = gaussian_blur<__m128, 0, true>;
+    func[format("{}{}{}", 1, true, 0)] = gaussian_blur<__m128, 1, true>;
+    func[format("{}{}{}", 2, true, 0)] = gaussian_blur<__m128, 2, true>;
+    func[format("{}{}{}", 0, false, 1)] = gaussian_blur<__m256, 0, false>;
+    func[format("{}{}{}", 1, false, 1)] = gaussian_blur<__m256, 1, false>;
+    func[format("{}{}{}", 2, false, 1)] = gaussian_blur<__m256, 2, false>;
+    func[format("{}{}{}", 0, true, 1)] = gaussian_blur<__m256, 0, true>;
+    func[format("{}{}{}", 1, true, 1)] = gaussian_blur<__m256, 1, true>;
+    func[format("{}{}{}", 2, true, 1)] = gaussian_blur<__m256, 2, true>;
+
+    return func[format("{}{}{}", R, use_cache, A)];
 }

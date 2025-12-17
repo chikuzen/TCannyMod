@@ -52,19 +52,19 @@ static inline void my_free(void* p, bool is_v8, ise_t* env) noexcept
 }
 
 
-Buffers::Buffers(size_t bufsize, size_t blsize, size_t emsize, size_t dirsize,
+Buffers::Buffers(size_t gbtsize, size_t blsize, size_t emsize, size_t dirsize,
     size_t hystsize, size_t align, bool ip, ise_t* e) :
     env(e), isV8(ip)
 {
-    size_t total_size = bufsize + blsize + emsize + dirsize + hystsize;
+    size_t total_size = gbtsize + blsize + emsize + dirsize + hystsize;
     orig = my_malloc<uint8_t*>(
         total_size, align, isV8, AVS_POOLED_ALLOC, env);
 
     memset(orig, 0, total_size);
-    buffp = reinterpret_cast<float*>(orig) + 8;
-    blurp = reinterpret_cast<float*>(orig + bufsize + align);
-    emaskp = reinterpret_cast<float*>(orig + bufsize + blsize);
-    dirp = reinterpret_cast<int32_t*>(orig + bufsize + blsize + emsize);
+    gbtp = reinterpret_cast<float*>(orig) + GB_MAX_LENGTH / 2;
+    blurp = reinterpret_cast<float*>(orig + gbtsize + align);
+    emaskp = reinterpret_cast<float*>(orig + gbtsize + blsize);
+    dirp = reinterpret_cast<int32_t*>(orig + gbtsize + blsize + emsize);
     hystp = orig + total_size - hystsize;
 };
 
@@ -84,7 +84,7 @@ static inline void validate(bool cond, const char* msg)
 
 
 static void __stdcall
-set_gb_kernel(float sigma, int& radius, float* kernel)
+set_gb_kernel(float sigma, int& radius, float* kernel, double* dbg)
 {
     radius = std::max(static_cast<int>(sigma * 3.0f + 0.5f), 1);
     int length = radius * 2 + 1;
@@ -96,43 +96,51 @@ set_gb_kernel(float sigma, int& radius, float* kernel)
         kernel[i + radius] = weight;
         sum += weight;
     }
-    for (int i = 0; i < length; kernel[i++] /= sum);
+    for (int i = 0; i < length; ++i) {
+        kernel[i] /= sum;
+        dbg[i] = static_cast<double>(kernel[i]);
+    }
 }
 
 
 TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
-    bool sobel, float s, arch_t arch, const char* n, bool is_v8, bool use_cache) :
-    GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin), th_max(tmax),
-    chroma(c), name(n), scale(s), isV8(is_v8), buff(nullptr), calc_dir(true)
+    bool sobel, float s, arch_t arch, const char* n, bool is_v8, bool use_cache,
+    bool debug) : GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin),
+    th_max(tmax), chroma(c), name(n), scale(s), isV8(is_v8), buff(nullptr),
+    calc_dir(true), debug(debug)
 {
     validate(!vi.IsPlanar(), "Planar format only.");
     memset(gbKernel, 0, sizeof(gbKernel));
+    memset(dbgKernel, 0, sizeof(dbgKernel));
 
     numPlanes = (vi.IsY8() || chroma == 0) ? 1 : 3;
     align = arch == HAS_AVX512 ? 64 : 32;
+    opt = arch == HAS_SSE41 ? "SSE4.1" : "AVX2";
 
     if (sigma > 0.0f) {
-        set_gb_kernel(sigma, gbRadius, gbKernel);
+        set_gb_kernel(sigma, gbRadius, gbKernel, dbgKernel);
 
         size_t length = (gbRadius * 2 + 1);
     }
 
+    gbtPitch = ((8 + vi.width + 8) * sizeof(float) + align - 1) & ~(align - 1);
     blurPitch = ((align + (vi.width + 1) * sizeof(float)) + align - 1) & ~(align - 1);
     emaskPitch = (vi.width * sizeof(float) + align - 1) & ~(align - 1);
     dirPitch = (vi.width * sizeof(int32_t) + align - 1) & ~(align - 1);
     hystPitch = (vi.width + align - 1) & ~(align - 1);
 
-    buffSize = ((8 + vi.width + 8) * sizeof(float) + align - 1) & ~(align - 1);
-    blurSize = blurPitch * (vi.height + 1);
+    gbtSize = gbtPitch * 6;
+    blurSize = blurPitch * (vi.height + 5);
     emaskSize = mode == 4 ? 0 : emaskPitch * (vi.height + 1);
     dirSize = (mode == 1 || mode == 4) ? 0 : dirPitch * (vi.height + 1);
     hystSize = (mode == 0 || mode == 2) ? hystPitch * vi.height : 0;
 
+    gbtPitch /= sizeof(float);
     blurPitch /= sizeof(float);
     emaskPitch /= sizeof(float);
     dirPitch /= sizeof(int32_t);
 
-    gaussianBlur = get_gaussian_blur(use_cache, arch);
+    gaussianBlur = get_gaussian_blur(gbRadius, use_cache, arch);
 
     bool calc_dir = mode != 1 && mode != 4;
     edgeDetection = get_edge_detection(sobel, calc_dir, use_cache, arch);
@@ -148,7 +156,7 @@ TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
     writeEdgeDirection = get_write_edge_direction(use_cache, arch);
 
     if (!isV8) {
-        buff = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize,
+        buff = new Buffers(gbtSize, blurSize, emaskSize, dirSize, hystSize,
                            align, false, nullptr);
     }
 }
@@ -170,7 +178,7 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
     Buffers* b = buff;
 
     if (isV8) {
-        b = new Buffers(buffSize, blurSize, emaskSize, dirSize, hystSize, align,
+        b = new Buffers(gbtSize, blurSize, emaskSize, dirSize, hystSize, align,
                         true, env);
         if (!b || !b->orig) {
             env->ThrowError("%s: failed to allocate buffer.", name);
@@ -201,37 +209,37 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
             continue;
         }
 
-        gaussianBlur(gbRadius, gbKernel, b->buffp, b->blurp, blurPitch, srcp,
-            src_pitch, width, height);
+        gaussianBlur(gbRadius, gbKernel, b->gbtp, gbtPitch, b->blurp, blurPitch,
+            srcp, src_pitch, width, height);
         if (mode == 4) {
             writeBluredFrame(b->blurp, dstp, width, height, dst_pitch,
-                             blurPitch, 1.0);
+                blurPitch, 1.0);
             continue;
         }
 
         edgeDetection(b->blurp, blurPitch, b->emaskp, emaskPitch, b->dirp,
-                      dirPitch, width, height);
+            dirPitch, width, height);
 
         if (mode == 1) {
             writeGradientMask(b->emaskp, dstp, width, height, dst_pitch,
-                              emaskPitch, scale);
+                emaskPitch, scale);
             continue;
         }
         if (mode == 3) {
             writeGradientDirection(b->dirp, dstp, dirPitch, dst_pitch, width,
-                                   height);
+                height);
             continue;
         }
 
         nonMaximumSuppression(b->emaskp, emaskPitch, b->dirp, dirPitch, b->blurp,
-                              blurPitch, width, height);
+            blurPitch, width, height);
 
         hysteresis(b->hystp, hystPitch, b->blurp, blurPitch, width, height,
-                   th_min, th_max);
+            th_min, th_max);
 
         if (mode == 2) {
             writeEdgeDirection(b->dirp, b->hystp, dstp, dirPitch, hystPitch,
-                               dst_pitch, width, height);
+                dst_pitch, width, height);
             continue;
         }
 
@@ -240,6 +248,14 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 
     if (isV8) {
         delete b;
+    }
+
+    if (debug) {
+        auto map = env->getFramePropsRW(dst);
+        env->propSetInt(map, "TCM_gbRadius", gbRadius, PROPAPPENDMODE_APPEND);
+        env->propSetFloatArray(map, "TCM_gbKernel", dbgKernel, gbRadius * 2 + 1);
+        env->propSetFloat(map, "TCM_scale", scale, PROPAPPENDMODE_APPEND);
+        env->propSetData(map, "TCM_opt", opt.c_str(), opt.length(), PROPAPPENDMODE_APPEND);
     }
 
     return dst;
@@ -309,13 +325,16 @@ create_tcannymod(AVSValue args, void* user_data, ise_t* env)
 
         bool cache = args[9].AsBool(false);
 
+        bool debug = args[10].AsBool(false);
+
         bool is_v8 = is_v8orgreater(env);
-
-
+        if (!is_v8) {
+            debug = false;
+        }
 
         return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
                            args[5].AsBool(false), scale, arch, "TCannyMod",
-                           is_v8, cache);
+                           is_v8, cache, debug);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("TCannyMod: %s", e.what());
@@ -341,10 +360,15 @@ create_gblur(AVSValue args, void* user_data, ise_t* env)
 
         bool cache = args[4].AsBool(false);
 
+        bool debug = args[5].AsBool(false);
+
         bool is_v8 = is_v8orgreater(env);
+        if (!is_v8) {
+            debug = false;
+        }
 
         return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma,
-                           false, 1.0f, arch, "GBlur", is_v8, cache);
+                           false, 1.0f, arch, "GBlur", is_v8, cache, debug);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("GBlur: %s", e.what());
@@ -374,10 +398,15 @@ create_emask(AVSValue args, void* user_data, ise_t* env)
 
         bool cache = args[6].AsBool(true);
 
+        bool debug = args[7].AsBool(false);
+
         bool is_v8 = is_v8orgreater(env);
+        if (!is_v8) {
+            debug = false;
+        }
 
         return new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
-                           sobel, scale, arch, "EMask", is_v8, cache);
+                           sobel, scale, arch, "EMask", is_v8, cache, debug);
 
     } catch (std::runtime_error& e) {
         env->ThrowError("EMask: %s", e.what());
@@ -404,14 +433,16 @@ AvisynthPluginInit3(ise_t* env, const AVS_Linkage* const vectors)
              /*6*/   "[chroma]i"
              /*7*/   "[gmmax]f"
              /*8*/   "[opt]i"
-             /*9*/   "[use_cache]b", create_tcannymod, nullptr);
+             /*9*/   "[use_cache]b"
+             /*10*/  "[debug]b", create_tcannymod, nullptr);
 
     env->AddFunction("GBlur",
              /*0*/   "c"
              /*1*/   "[sigma]f"
              /*2*/   "[chroma]i"
              /*3*/   "[opt]i"
-             /*4*/   "[use_cache]b", create_gblur, nullptr);
+             /*4*/   "[use_cache]b"
+             /*5*/   "[debug]b", create_gblur, nullptr);
 
     env->AddFunction("EMask",
              /*0*/   "c"
@@ -420,7 +451,8 @@ AvisynthPluginInit3(ise_t* env, const AVS_Linkage* const vectors)
              /*3*/   "[chroma]i"
              /*4*/   "[sobel]b"
              /*5*/   "[opt]i"
-             /*6*/   "[use_cache]b", create_emask, nullptr);
+             /*6*/   "[use_cache]b"
+             /*7*/   "[debug]b", create_emask, nullptr);
 
     return "Canny edge detection filter for Avisynth2.6/Avisynth+ ver."
         TCANNY_M_VERSION;

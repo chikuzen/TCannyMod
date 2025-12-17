@@ -26,8 +26,8 @@
 
 #include <cstdint>
 #include <algorithm>
-#include <map>
-#include <tuple>
+#include <unordered_map>
+#include <format>
 #include "tcannymod.h"
 #include "simd.h"
 
@@ -286,27 +286,28 @@ non_max_suppress(const float* emaskp, const size_t em_pitch,
 edge_detection_t
 get_edge_detection(bool use_sobel, bool calc_dir, bool use_cache, arch_t arch) noexcept
 {
-    using std::make_tuple;
-    std::map<std::tuple<bool, bool, bool, arch_t>, edge_detection_t> func;
+    using std::format;
+    std::unordered_map<std::string, edge_detection_t> func;
+    int a = arch == HAS_SSE41 ? 1 : 2;
 
-    func[make_tuple(false, false, false, HAS_SSE41)] = standard<__m128, __m128i, false, false>;
-    func[make_tuple(false, true, false, HAS_SSE41)] = standard<__m128, __m128i, true, false>;
-    func[make_tuple(true, false, false, HAS_SSE41)] = sobel<__m128, __m128i, false, false>;
-    func[make_tuple(true, true, false, HAS_SSE41)] = sobel<__m128, __m128i, true, false>;
-    func[make_tuple(false, false, true, HAS_SSE41)] = standard<__m128, __m128i, false, true>;
-    func[make_tuple(false, true, true, HAS_SSE41)] = standard<__m128, __m128i, true, true>;
-    func[make_tuple(true, false, true, HAS_SSE41)] = sobel<__m128, __m128i, false, true>;
-    func[make_tuple(true, true, true, HAS_SSE41)] = sobel<__m128, __m128i, true, true>;
-    func[make_tuple(false, false, false, HAS_AVX2)] = standard<__m256, __m256i, false, false>;
-    func[make_tuple(false, true, false, HAS_AVX2)] = standard<__m256, __m256i, true, false>;
-    func[make_tuple(true, false, false, HAS_AVX2)] = sobel<__m256, __m256i, false, false>;
-    func[make_tuple(true, true, false, HAS_AVX2)] = sobel<__m256, __m256i, true, false>;
-    func[make_tuple(false, false, true, HAS_AVX2)] = standard<__m256, __m256i, false, true>;
-    func[make_tuple(false, true, true, HAS_AVX2)] = standard<__m256, __m256i, true, true>;
-    func[make_tuple(true, false, true, HAS_AVX2)] = sobel<__m256, __m256i, false, true>;
-    func[make_tuple(true, true, true, HAS_AVX2)] = sobel<__m256, __m256i, true, true>;
+    func[format("{}{}{}{}",false, false, false, 1)] = standard<__m128, __m128i, false, false>;
+    func[format("{}{}{}{}",false, true, false, 1)] = standard<__m128, __m128i, true, false>;
+    func[format("{}{}{}{}",true, false, false, 1)] = sobel<__m128, __m128i, false, false>;
+    func[format("{}{}{}{}",true, true, false, 1)] = sobel<__m128, __m128i, true, false>;
+    func[format("{}{}{}{}",false, false, true, 1)] = standard<__m128, __m128i, false, true>;
+    func[format("{}{}{}{}",false, true, true, 1)] = standard<__m128, __m128i, true, true>;
+    func[format("{}{}{}{}",true, false, true, 1)] = sobel<__m128, __m128i, false, true>;
+    func[format("{}{}{}{}",true, true, true, 1)] = sobel<__m128, __m128i, true, true>;
+    func[format("{}{}{}{}",false, false, false, 2)] = standard<__m256, __m256i, false, false>;
+    func[format("{}{}{}{}",false, true, false, 2)] = standard<__m256, __m256i, true, false>;
+    func[format("{}{}{}{}",true, false, false, 2)] = sobel<__m256, __m256i, false, false>;
+    func[format("{}{}{}{}",true, true, false, 2)] = sobel<__m256, __m256i, true, false>;
+    func[format("{}{}{}{}",false, false, true, 2)] = standard<__m256, __m256i, false, true>;
+    func[format("{}{}{}{}",false, true, true, 2)] = standard<__m256, __m256i, true, true>;
+    func[format("{}{}{}{}",true, false, true, 2)] = sobel<__m256, __m256i, false, true>;
+    func[format("{}{}{}{}",true, true, true, 2)] = sobel<__m256, __m256i, true, true>;
 
-    return func[make_tuple(use_sobel, calc_dir, use_cache, arch)];
+    return func[format("{}{}{}{}", use_sobel, calc_dir, use_cache, a)];
 }
 
 

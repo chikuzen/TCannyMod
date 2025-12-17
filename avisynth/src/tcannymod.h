@@ -27,6 +27,7 @@
 #define TCANNY_MOD_H
 
 #include <cstdint>
+#include <string>
 #define WIN32_LEAN_AND_MEAN
 #define VC_EXTRALEAN
 #define NOMINMAX
@@ -41,10 +42,9 @@ typedef IScriptEnvironment ise_t;
 
 
 typedef void(__stdcall *gaussian_blur_t)(
-    const int radius, const float* kernel, float* buffp, float* blurp,
-    const size_t blur_pitch, const uint8_t* srcp, const size_t src_pitch,
-    const size_t width, const size_t height) noexcept;
-
+    const int radius, const float* kernel, float* gbtp, const size_t gbt_pitch,
+    float* blurp, const size_t blur_pitch, const uint8_t* srcp,
+    const size_t src_pitch, const size_t width, const size_t height);
 
 typedef void(__stdcall *edge_detection_t)(
     float* blurp, const size_t blur_pitch, float* emaskp,
@@ -91,7 +91,7 @@ class Buffers {
     bool isV8;
 public:
     uint8_t* orig;
-    float* buffp;
+    float* gbtp;
     float* blurp;
     float* emaskp;
     int32_t* dirp;
@@ -114,14 +114,18 @@ class TCannyM : public GenericVideoFilter {
     bool calc_dir;
     int gbRadius; // max: 8
     float gbKernel[GB_MAX_LENGTH];
+    bool debug;
+    std::string opt;
+    double dbgKernel[GB_MAX_LENGTH];
     //float* horizontalKernel;
     //float* verticalKernel;
     Buffers* buff;
+    size_t gbtPitch;
     size_t blurPitch;
     size_t emaskPitch;
     size_t dirPitch;
     size_t hystPitch;
-    size_t buffSize;
+    size_t gbtSize;
     size_t blurSize;
     size_t emaskSize;
     size_t dirSize;
@@ -138,7 +142,7 @@ class TCannyM : public GenericVideoFilter {
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
             int chroma, bool sobel, float scale, arch_t arch, const char* name,
-            bool is_plus, bool use_cache);
+            bool is_plus, bool use_cache, bool debug);
     ~TCannyM();
     PVideoFrame __stdcall GetFrame(int n, ise_t* env);
     int __stdcall SetCacheHints(int hints, int)
@@ -152,10 +156,12 @@ public:
 };
 
 
-gaussian_blur_t get_gaussian_blur(bool use_cache, arch_t arch) noexcept;
+gaussian_blur_t
+get_gaussian_blur(int radius, bool use_cache, arch_t arch) noexcept;
 
 edge_detection_t
-get_edge_detection(bool use_sobel, bool calc_dir, bool use_cache, arch_t arch) noexcept;
+get_edge_detection(bool use_sobel, bool calc_dir, bool use_cache,
+    arch_t arch) noexcept;
 
 non_max_suppress_t get_non_max_suppress(arch_t arch) noexcept;
 

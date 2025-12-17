@@ -32,10 +32,7 @@
 
 struct Pos {
     int32_t x, y;
-    Pos(int32_t _x, int32_t _y) {
-        x = _x;
-        y = _y;
-    }
+    Pos(int32_t _x, int32_t _y) : x(_x), y(_y) {}
 };
 
 static __forceinline void

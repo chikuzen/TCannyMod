@@ -1,22 +1,22 @@
 /*
   write_frame.cpp
-  
+
   This file is part of TCannyMod
-  
+
   Copyright (C) 2013 Oka Motofumi
-  
+
   Authors: Oka Motofumi (chikuzen.mo at gmail dot com)
-  
+
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
@@ -38,7 +38,7 @@ write_gradient_mask(const float* srcp, uint8_t* dstp, const size_t width,
     constexpr size_t align = sizeof(Vi);
     constexpr size_t step = align / sizeof(float);
 
-    static const Vf vec_scale = set1_ps<Vf>(scale);
+    static const Vf vec_scale = set1<Vf, float>(scale);
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; x += align) {
@@ -46,16 +46,16 @@ write_gradient_mask(const float* srcp, uint8_t* dstp, const size_t width,
             Vf f1 = load<Vf>(srcp + x + step * 1);
             Vf f2 = load<Vf>(srcp + x + step * 2);
             Vf f3 = load<Vf>(srcp + x + step * 3);
-            if (SCALE) {
+            if constexpr (SCALE) {
                 f0 = mul(f0, vec_scale);
                 f1 = mul(f1, vec_scale);
                 f2 = mul(f2, vec_scale);
                 f3 = mul(f3, vec_scale);
             }
-            Vi x0 = cvtps_i32(f0);
-            Vi x1 = cvtps_i32(f1);
-            Vi x2 = cvtps_i32(f2);
-            Vi x3 = cvtps_i32(f3);
+            Vi x0 = cvtps_i32<Vi, Vf>(f0);
+            Vi x1 = cvtps_i32<Vi, Vf>(f1);
+            Vi x2 = cvtps_i32<Vi, Vf>(f2);
+            Vi x3 = cvtps_i32<Vi, Vf>(f3);
 
             Vi ret = cvti32_u8(x0, x1, x2, x3);
             stream(dstp + x, ret);
@@ -108,7 +108,7 @@ write_edge_direction(const int32_t* dirp, const uint8_t* hystp, uint8_t* dstp,
             const Vi x3 = load<Vi>(dirp + x + step * 3);
             const Vi dir = cvti32_u8(x0, x1, x2, x3);
             const Vi hyst = load<Vi>(hystp + x);
-            const Vi dst = and_si(dir, hyst);
+            const Vi dst = _and(dir, hyst);
             stream(dstp + x, dst);
         }
         dirp += dir_pitch;
@@ -127,7 +127,7 @@ write_gradient_mask_t get_write_gradient_mask(bool scale, arch_t arch) noexcept
     }
 #endif
     return scale ? write_gradient_mask<__m128, __m128i, true>
-        : write_gradient_mask<__m128, __m128i, false>; 
+        : write_gradient_mask<__m128, __m128i, false>;
 
 }
 

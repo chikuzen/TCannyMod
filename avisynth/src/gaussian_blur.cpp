@@ -29,7 +29,7 @@
 #include "simd.h"
 
 
-template <typename Vf, arch_t ARCH>
+template <typename Vf>
 static void __stdcall
 convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
                  const int src_pitch, float* blurp, const size_t blur_pitch) noexcept
@@ -38,7 +38,7 @@ convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
 
     for (size_t y = 0; y < height; y++) {
         for (size_t x = 0; x < width; x += step) {
-            Vf val = cvtu8_ps<Vf, ARCH>(srcp + x);
+            Vf val = cvtu8_ps<Vf>(srcp + x);
             stream(blurp + x, val);
         }
         srcp += src_pitch;
@@ -47,7 +47,7 @@ convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
 }
 
 template <typename Vf>
-static void
+SFINLINE void
 horizontal_blur(const float* kernel, float* buffp, const int radius,
     const size_t width, float* blurp) noexcept
 {
@@ -62,7 +62,7 @@ horizontal_blur(const float* kernel, float* buffp, const int radius,
     for (size_t x = 0; x < width; x += step) {
         Vf sum = zero<Vf>();
         for (int i = -radius; i <= radius; ++i) {
-            Vf k = set1_ps<Vf>(kernel[i + radius]);
+            Vf k = set1<Vf, float>(kernel[i + radius]);
             Vf val = loadu<Vf>(buffp + x + i);
             sum = madd(k, val, sum);
         }
@@ -71,14 +71,14 @@ horizontal_blur(const float* kernel, float* buffp, const int radius,
 }
 
 
-template <typename Vf, size_t MAX_LENGTH, arch_t ARCH>
+template <typename Vf>
 static void __stdcall
 gaussian_blur(const int radius, const float* kernel, float* buffp, float* blurp,
     const size_t blur_pitch, const uint8_t* srcp, const size_t src_pitch,
     const size_t width, const size_t height) noexcept
 {
     if (radius == 0) {
-        convert_to_float<Vf, ARCH>(
+        convert_to_float<Vf>(
                 width, height, srcp, src_pitch, blurp, blur_pitch);
         return;
     }
@@ -87,7 +87,7 @@ gaussian_blur(const int radius, const float* kernel, float* buffp, float* blurp,
     constexpr size_t step = align / sizeof(float);
     const int length = radius * 2 + 1;
 
-    const uint8_t* p[MAX_LENGTH];
+    const uint8_t* p[GB_MAX_LENGTH];
     p[radius] = srcp;
     for (int r = 1; r <= radius; ++r) {
         p[radius + r] = srcp + r * src_pitch;
@@ -99,8 +99,8 @@ gaussian_blur(const int radius, const float* kernel, float* buffp, float* blurp,
             Vf sum = zero<Vf>();
 
             for (int l = 0; l < length; ++l) {
-                Vf input = cvtu8_ps<Vf, ARCH>(p[l] + x);
-                Vf k = set1_ps<Vf>(kernel[l]);
+                Vf input = cvtu8_ps<Vf>(p[l] + x);
+                Vf k = set1<Vf, float>(kernel[l]);
                 sum = madd(k, input, sum);
             }
             store(buffp + x, sum);
@@ -123,7 +123,7 @@ gaussian_blur(const int radius, const float* kernel, float* buffp, float* blurp,
 gaussian_blur_t get_gaussian_blur(arch_t arch) noexcept
 {
     if (arch == HAS_AVX2) {
-        return gaussian_blur<__m256, GB_MAX_LENGTH, HAS_AVX2>;
+        return gaussian_blur<__m256>;
     }
-    return gaussian_blur<__m128, GB_MAX_LENGTH, HAS_SSE41>;
+    return gaussian_blur<__m128>;
 }

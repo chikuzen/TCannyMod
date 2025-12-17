@@ -23,7 +23,6 @@
 */
 
 
-#include <malloc.h>
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>

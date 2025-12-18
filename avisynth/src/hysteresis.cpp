@@ -27,68 +27,65 @@
 #include <vector>
 #include <cmath>
 #include <cfloat>
+#include <array>
 #include "tcannymod.h"
 
 
 struct Pos {
     int32_t x, y;
     Pos(int32_t _x, int32_t _y) : x(_x), y(_y) {}
-};
-
-static __forceinline void
-hystfunc(const int32_t x, const int32_t y, float* edge, uint8_t* hyst,
-         const size_t epitch, const size_t hpitch, const float th,
-         std::vector<Pos>& stack) noexcept
-{
-    if (!hyst[x + y * hpitch] && edge[x + y * epitch] > th) {
-        edge[x + y * epitch] = FLT_MAX;
-        hyst[x + y * hpitch] = 0xFF;
-        stack.emplace_back(x, y);
+    void search(const int width, const int height, float* edge, uint8_t* hyst,
+        const size_t epitch, const size_t hpitch, const float th,
+        std::vector<Pos>& stack)
+    {
+        std::array<Pos, 8> coodinates{
+            Pos(x - 1, y - 1), Pos(x , y - 1), Pos(x + 1, y - 1), Pos(x - 1, y),
+            Pos(x + 1, y), Pos(x - 1, y + 1), Pos(x, y + 1), Pos(x + 1, y + 1),
+        };
+        for (const auto& p : coodinates) {
+            if (p.x < 0) continue;
+            else if (p.x == width) continue;
+            else if (p.y < 0) continue;
+            else if (p.y == height) continue;
+            else {
+                auto posh = p.x + p.y * hpitch;
+                auto pose = p.x + p.y * epitch;
+                if (hyst[posh] == 0 && edge[pose] >= th) {
+                    edge[pose] = FLT_MAX;
+                    hyst[posh] = 0xFF;
+                    stack.emplace_back(p);
+                }
+            }
+        }
     }
-}
+};
 
 
 void __stdcall
-hysteresis(uint8_t* hystp, const size_t hpitch, float* blurp,
-           const size_t bpitch, const int width, const int height,
+hysteresis(uint8_t* hmap, const size_t hpitch, float* emap,
+           const size_t epitch, const int width, const int height,
            const float tmin, const float tmax) noexcept
 {
-    memset(hystp, 0, hpitch * height);
+    memset(hmap, 0, hpitch * height);
     std::vector<Pos> stack;
     stack.reserve(512);
 
     for (int32_t y = 0; y < height; ++y) {
         for (int32_t x = 0; x < width; ++x) {
-            if (hystp[x + y * hpitch] || blurp[x + y * bpitch] < tmax) {
+            auto posh = x + y * hpitch;
+            auto posb = x + y * epitch;
+            if (hmap[posh] != 0 || emap[posb] < tmax) {
                 continue;
+            } else {
+                emap[posb] = FLT_MAX;
+                hmap[posh] = 0xFF;
+                stack.emplace_back(x, y);
             }
-            blurp[x + y * bpitch] = FLT_MAX;
-            hystp[x + y * hpitch] = 0xFF;
-            stack.emplace_back(x, y);
-
             while (!stack.empty()) {
-                Pos  pos = stack.back();
+                auto pos = stack.back();
                 stack.pop_back();
-                int32_t xmin = std::max(pos.x - 1, 0);
-                int32_t xmax = std::min(pos.x + 1, width - 1);
-                int32_t ymin = std::max(pos.y - 1, 0);
-                int32_t ymax = std::min(pos.y + 1, height - 1);
-                hystfunc(xmin, ymin, blurp, hystp, bpitch, hpitch, tmin, stack);
-                hystfunc(xmin + 1, ymin, blurp, hystp, bpitch, hpitch, tmin, stack);
-                if (xmin + 2 == xmax) {
-                    hystfunc(xmax, ymin, blurp, hystp, bpitch, hpitch, tmin, stack);
-                }
-                hystfunc(xmin, ymin + 1, blurp, hystp, bpitch, hpitch, tmin, stack);
-                if (xmin + 2 == xmax) {
-                    hystfunc(xmax, ymin + 1, blurp, hystp, bpitch, hpitch, tmin, stack);
-                }
-                if (ymin + 2 == ymax) {
-                    hystfunc(xmin, ymax, blurp, hystp, bpitch, hpitch, tmin, stack);
-                    hystfunc(xmin + 1, ymax, blurp, hystp, bpitch, hpitch, tmin, stack);
-                    if (xmin + 2 == xmax) {
-                        hystfunc(xmax, ymax, blurp, hystp, bpitch, hpitch, tmin, stack);
-                    }
-                }
+                pos.search(width, height, emap, hmap, epitch, hpitch, tmin,
+                    stack);
             }
         }
     }

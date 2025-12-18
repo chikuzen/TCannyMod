@@ -31,35 +31,16 @@
 #include "tcannymod.h"
 #include "simd.h"
 
+constexpr float tangent_pi_x1_8 = 0.414213538169860839843750f;
+constexpr float tabgent_pi_x3_8 = 2.414213657379150390625000f;
+constexpr float tangent_pi_x5_8 = -2.414213657379150390625000f;
+constexpr float tangent_pi_x7_8 = -0.414213538169860839843750f;
 
-static const float* get_tangent(int idx) noexcept
-{
-     alignas(32) static const float tangent[32] = {
-        0.414213538169860839843750f, 0.414213538169860839843750f, // tan(pi/8)
-        0.414213538169860839843750f, 0.414213538169860839843750f,
-        0.414213538169860839843750f, 0.414213538169860839843750f,
-        0.414213538169860839843750f, 0.414213538169860839843750f,
-        2.414213657379150390625000f, 2.414213657379150390625000f, // tan(3*pi/8)
-        2.414213657379150390625000f, 2.414213657379150390625000f,
-        2.414213657379150390625000f, 2.414213657379150390625000f,
-        2.414213657379150390625000f, 2.414213657379150390625000f,
-        -2.414213657379150390625000f, -2.414213657379150390625000f, // tan(5*pi/8)
-        -2.414213657379150390625000f, -2.414213657379150390625000f,
-        -2.414213657379150390625000f, -2.414213657379150390625000f,
-        -2.414213657379150390625000f, -2.414213657379150390625000f,
-        -0.414213538169860839843750f, -0.414213538169860839843750f, // tan(7*pi/8)
-        -0.414213538169860839843750f, -0.414213538169860839843750f,
-        -0.414213538169860839843750f, -0.414213538169860839843750f,
-        -0.414213538169860839843750f, -0.414213538169860839843750f,
-    };
-
-    return tangent + 8 * idx;
-}
 
 template <typename Vf, typename Vi, bool USE_CACHE>
 SFINLINE void
-calc_direction(const Vf& gx, const Vf& gy, int32_t* dstp, const float* tan0225,
-    const float* tan0675, const float* tan1125, const float* tan1575) noexcept
+calc_direction(const Vf& gx, const Vf& gy, int32_t* dstp, const Vf& t0225,
+    const Vf& t0675, const Vf& t1125, const Vf& t1575) noexcept
 {
     const Vf z = zero<Vf>();
     const Vf vertical = set1<Vf, float>(90.0f);
@@ -71,10 +52,6 @@ calc_direction(const Vf& gx, const Vf& gy, int32_t* dstp, const float* tan0225,
     // if tan is unorderd(inf or NaN), tan = 90.0f
     mask = cmpord_ps(tan, tan);
     tan = blendv(vertical, tan, mask);
-    const Vf t0225 = load<Vf>(tan0225);
-    const Vf t0675 = load<Vf>(tan0675);
-    const Vf t1125 = load<Vf>(tan1125);
-    const Vf t1575 = load<Vf>(tan1575);
     // if t1575 <= tan < t0225, direction is 31 (horizontal)
     Vi d0 = cast<Vi, Vf>(_and(cmpge_32(tan, t1575), cmplt_32(tan, t0225)));
     d0 = srli_i32(d0, 27);
@@ -88,7 +65,7 @@ calc_direction(const Vf& gx, const Vf& gy, int32_t* dstp, const float* tan0225,
     Vi d3 = cast<Vi, Vf>(_and(cmpge_32(tan, t1125), cmplt_32(tan, t1575)));
     d3 = srli_i32(d3, 24);
     d0 = _or(_or(d0, d1), _or(d2, d3));
-    if constexpr(USE_CACHE) {
+    if constexpr (USE_CACHE) {
         store(dstp, d0);
     } else {
         stream(dstp, d0);
@@ -109,10 +86,10 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
     float* p1 = blurp;
     float* p2 = blurp + blur_pitch;
 
-    const float* tan0225 = get_tangent(0);
-    const float* tan0675 = get_tangent(1);
-    const float* tan1125 = get_tangent(2);
-    const float* tan1575 = get_tangent(3);
+    const Vf t0225 = set1<Vf>(tangent_pi_x1_8);
+    const Vf t0675 = set1<Vf>(tangent_pi_x3_8);
+    const Vf t1125 = set1<Vf>(tangent_pi_x5_8);
+    const Vf t1575 = set1<Vf>(tangent_pi_x6_8);
 
     for (size_t y = 0; y < height; y++) {
         p1[-1] = p1[0];
@@ -123,7 +100,8 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
             Vf gx = sub(loadu<Vf>(p1 + x + 1), loadu<Vf>(p1 + x - 1)); // [-1, 0, 1]
 
             if constexpr (CALC_DIRECTION) {
-                calc_direction<Vf, Vi, USE_CACHE>(gx, gy, dirp + x, tan0225, tan0675, tan1125, tan1575);
+                calc_direction<Vf, Vi, USE_CACHE>(gx, gy, dirp + x, t0225,
+                    t0675, t1125, t1575);
             }
 
             Vf magnitude = mul(gx, gx);
@@ -171,10 +149,10 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
     p1[-1] = p1[0];
     p1[width] = p1[width - 1];
 
-    const float* tan0225 = get_tangent(0);
-    const float* tan0675 = get_tangent(1);
-    const float* tan1125 = get_tangent(2);
-    const float* tan1575 = get_tangent(3);
+    const Vf t0225 = set1<Vf>(tangent_pi_x1_8);
+    const Vf t0675 = set1<Vf>(tangent_pi_x3_8);
+    const Vf t1125 = set1<Vf>(tangent_pi_x5_8);
+    const Vf t1575 = set1<Vf>(tangent_pi_x6_8);
 
     for (size_t y = 0; y < height; y++) {
         p2[-1] = p2[0];
@@ -202,7 +180,8 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
             gy = sub(gy, add(t, t));
 
             if constexpr (CALC_DIRECTION) {
-                calc_direction<Vf, Vi, USE_CACHE>(gx, gy, dirp, tan0225, tan0675, tan1125, tan1575);
+                calc_direction<Vf, Vi, USE_CACHE>(gx, gy, dirp, t0225, t0675,
+                    t1125, t1575);
             }
 
             Vf magnitude = mul(gx, gx);
@@ -290,22 +269,22 @@ get_edge_detection(bool use_sobel, bool calc_dir, bool use_cache, arch_t arch) n
     std::unordered_map<std::string, edge_detection_t> func;
     int a = arch == HAS_SSE41 ? 1 : 2;
 
-    func[format("{}{}{}{}",false, false, false, 1)] = standard<__m128, __m128i, false, false>;
-    func[format("{}{}{}{}",false, true, false, 1)] = standard<__m128, __m128i, true, false>;
-    func[format("{}{}{}{}",true, false, false, 1)] = sobel<__m128, __m128i, false, false>;
-    func[format("{}{}{}{}",true, true, false, 1)] = sobel<__m128, __m128i, true, false>;
-    func[format("{}{}{}{}",false, false, true, 1)] = standard<__m128, __m128i, false, true>;
-    func[format("{}{}{}{}",false, true, true, 1)] = standard<__m128, __m128i, true, true>;
-    func[format("{}{}{}{}",true, false, true, 1)] = sobel<__m128, __m128i, false, true>;
-    func[format("{}{}{}{}",true, true, true, 1)] = sobel<__m128, __m128i, true, true>;
-    func[format("{}{}{}{}",false, false, false, 2)] = standard<__m256, __m256i, false, false>;
-    func[format("{}{}{}{}",false, true, false, 2)] = standard<__m256, __m256i, true, false>;
-    func[format("{}{}{}{}",true, false, false, 2)] = sobel<__m256, __m256i, false, false>;
-    func[format("{}{}{}{}",true, true, false, 2)] = sobel<__m256, __m256i, true, false>;
-    func[format("{}{}{}{}",false, false, true, 2)] = standard<__m256, __m256i, false, true>;
-    func[format("{}{}{}{}",false, true, true, 2)] = standard<__m256, __m256i, true, true>;
-    func[format("{}{}{}{}",true, false, true, 2)] = sobel<__m256, __m256i, false, true>;
-    func[format("{}{}{}{}",true, true, true, 2)] = sobel<__m256, __m256i, true, true>;
+    func[format("{}{}{}{}", false, false, false, 1)] = standard<__m128, __m128i, false, false>;
+    func[format("{}{}{}{}", false, true, false, 1)] = standard<__m128, __m128i, true, false>;
+    func[format("{}{}{}{}", true, false, false, 1)] = sobel<__m128, __m128i, false, false>;
+    func[format("{}{}{}{}", true, true, false, 1)] = sobel<__m128, __m128i, true, false>;
+    func[format("{}{}{}{}", false, false, true, 1)] = standard<__m128, __m128i, false, true>;
+    func[format("{}{}{}{}", false, true, true, 1)] = standard<__m128, __m128i, true, true>;
+    func[format("{}{}{}{}", true, false, true, 1)] = sobel<__m128, __m128i, false, true>;
+    func[format("{}{}{}{}", true, true, true, 1)] = sobel<__m128, __m128i, true, true>;
+    func[format("{}{}{}{}", false, false, false, 2)] = standard<__m256, __m256i, false, false>;
+    func[format("{}{}{}{}", false, true, false, 2)] = standard<__m256, __m256i, true, false>;
+    func[format("{}{}{}{}", true, false, false, 2)] = sobel<__m256, __m256i, false, false>;
+    func[format("{}{}{}{}", true, true, false, 2)] = sobel<__m256, __m256i, true, false>;
+    func[format("{}{}{}{}", false, false, true, 2)] = standard<__m256, __m256i, false, true>;
+    func[format("{}{}{}{}", false, true, true, 2)] = standard<__m256, __m256i, true, true>;
+    func[format("{}{}{}{}", true, false, true, 2)] = sobel<__m256, __m256i, false, true>;
+    func[format("{}{}{}{}", true, true, true, 2)] = sobel<__m256, __m256i, true, true>;
 
     return func[format("{}{}{}{}", use_sobel, calc_dir, use_cache, a)];
 }

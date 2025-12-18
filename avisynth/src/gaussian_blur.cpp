@@ -184,9 +184,9 @@ gaussian_blur(const int radius, const float* kernel, float* gbtp,
                 for (int l = 0; l < length + 2; ++l) {
                     p[l] = p[l + 1];
                 }
-                if (y < height - 1 - radius) {
+                if (y < height - 2 - radius - i) {
                     p[length + 2] += src_pitch;
-                } else if (y > height - 1 - radius) {
+                } else if (y > height - 2 - radius - i) {
                     p[length + 2] -= src_pitch;
                 }
             }

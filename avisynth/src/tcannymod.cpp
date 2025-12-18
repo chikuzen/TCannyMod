@@ -255,8 +255,8 @@ PVideoFrame TCannyM::getFrameDebug(int n, ise_t* env)
     env->propSetInt(map, "TCM_gbRadius", gbRadius, PROPAPPENDMODE_APPEND);
     env->propSetFloatArray(map, "TCM_gbKernel", dbgKernel, gbRadius * 2 + 1);
     env->propSetFloat(map, "TCM_scale", scale, PROPAPPENDMODE_APPEND);
-    env->propSetData(map, "TCM_opt", opt.c_str(), opt.length(),
-        PROPAPPENDMODE_APPEND);
+    env->propSetDataH(map, "TCM_opt", opt.c_str(), opt.length(),
+        AVSPropDataTypeHint::PROPDATATYPEHINT_UTF8, PROPAPPENDMODE_APPEND);
     env->propSetInt(map, "TCM_procTime", duration, PROPAPPENDMODE_APPEND);
 
     return dst;
@@ -440,7 +440,7 @@ create_gblur(AVSValue args, void* user_data, ise_t* env)
         float sigma = (float)args[1].AsFloat(0.5);
         validate(sigma < 0.0f, "sigma must be greater than zero.");
 
-        int chroma = args[2].AsInt(1);
+        int chroma = args[2].AsInt(0);
         validate(chroma < 0 || chroma > 4,
                  "chroma must be set to 0, 1, 2, 3 or 4.");
 

@@ -32,7 +32,7 @@
 #include "simd.h"
 
 constexpr float tangent_pi_x1_8 = 0.414213538169860839843750f;
-constexpr float tabgent_pi_x3_8 = 2.414213657379150390625000f;
+constexpr float tangent_pi_x3_8 = 2.414213657379150390625000f;
 constexpr float tangent_pi_x5_8 = -2.414213657379150390625000f;
 constexpr float tangent_pi_x7_8 = -0.414213538169860839843750f;
 
@@ -89,7 +89,7 @@ standard(float* blurp, const size_t blur_pitch, float* emaskp,
     const Vf t0225 = set1<Vf>(tangent_pi_x1_8);
     const Vf t0675 = set1<Vf>(tangent_pi_x3_8);
     const Vf t1125 = set1<Vf>(tangent_pi_x5_8);
-    const Vf t1575 = set1<Vf>(tangent_pi_x6_8);
+    const Vf t1575 = set1<Vf>(tangent_pi_x7_8);
 
     for (size_t y = 0; y < height; y++) {
         p1[-1] = p1[0];
@@ -152,7 +152,7 @@ sobel(float* blurp, const size_t blur_pitch, float* emaskp,
     const Vf t0225 = set1<Vf>(tangent_pi_x1_8);
     const Vf t0675 = set1<Vf>(tangent_pi_x3_8);
     const Vf t1125 = set1<Vf>(tangent_pi_x5_8);
-    const Vf t1575 = set1<Vf>(tangent_pi_x6_8);
+    const Vf t1575 = set1<Vf>(tangent_pi_x7_8);
 
     for (size_t y = 0; y < height; y++) {
         p2[-1] = p2[0];

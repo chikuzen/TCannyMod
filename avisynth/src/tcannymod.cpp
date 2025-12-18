@@ -26,6 +26,8 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <chrono>
+#include <format>
 #include "tcannymod.h"
 #include <avs/alignment.h>
 #include "cpu_check.h"
@@ -169,9 +171,103 @@ TCannyM::~TCannyM()
     }
 }
 
+PVideoFrame TCannyM::getFrameDebug(int n, ise_t* env)
+{
+    PVideoFrame src = child->GetFrame(n, env);
+    PVideoFrame dst;
+    Buffers* b = buff;
+    b = new Buffers(gbtSize, blurSize, emaskSize, dirSize, hystSize, align,
+        true, env);
+    if (!b || !b->orig) {
+        env->ThrowError("%s: failed to allocate buffer.", name);
+    }
+    dst = env->NewVideoFrameP(vi, &src);
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    static const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
+
+    for (int i = 0; i < numPlanes; i++) {
+
+        const int p = planes[i];
+        const int width = src->GetRowSize(p);
+        const int height = src->GetHeight(p);
+        const int src_pitch = src->GetPitch(p);
+        const uint8_t* srcp = src->GetReadPtr(p);
+        uint8_t* dstp = dst->GetWritePtr(p);
+        const int dst_pitch = dst->GetPitch(p);
+
+        if (i > 0 && chroma > 1) {
+            if (chroma == 2) {
+                env->BitBlt(dstp, dst_pitch, srcp, src_pitch, width, height);
+            } else {
+                memset(dstp, chroma == 3 ? 0x80 : 0x00, dst_pitch * height);
+            }
+            continue;
+        }
+
+        gaussianBlur(gbRadius, gbKernel, b->gbtp, gbtPitch, b->blurp, blurPitch,
+            srcp, src_pitch, width, height);
+        if (mode == 4) {
+            writeBluredFrame(b->blurp, dstp, width, height, dst_pitch,
+                blurPitch, 1.0);
+            continue;
+        }
+
+        edgeDetection(b->blurp, blurPitch, b->emaskp, emaskPitch, b->dirp,
+            dirPitch, width, height);
+
+        if (mode == 1) {
+            writeGradientMask(b->emaskp, dstp, width, height, dst_pitch,
+                emaskPitch, scale);
+            continue;
+        }
+        if (mode == 3) {
+            writeGradientDirection(b->dirp, dstp, dirPitch, dst_pitch, width,
+                height);
+            continue;
+        }
+
+        nonMaximumSuppression(b->emaskp, emaskPitch, b->dirp, dirPitch, b->blurp,
+            blurPitch, width, height);
+
+        hysteresis(b->hystp, hystPitch, b->blurp, blurPitch, width, height,
+            th_min, th_max);
+
+        if (mode == 2) {
+            writeEdgeDirection(b->dirp, b->hystp, dstp, dirPitch, hystPitch,
+                dst_pitch, width, height);
+            continue;
+        }
+
+        env->BitBlt(dstp, dst_pitch, b->hystp, hystPitch, width, height);
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+
+    delete b;
+
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        end - start).count();
+
+    auto map = env->getFramePropsRW(dst);
+    env->propSetInt(map, "TCM_mode", mode, PROPAPPENDMODE_APPEND);
+    env->propSetInt(map, "TCM_gbRadius", gbRadius, PROPAPPENDMODE_APPEND);
+    env->propSetFloatArray(map, "TCM_gbKernel", dbgKernel, gbRadius * 2 + 1);
+    env->propSetFloat(map, "TCM_scale", scale, PROPAPPENDMODE_APPEND);
+    env->propSetData(map, "TCM_opt", opt.c_str(), opt.length(),
+        PROPAPPENDMODE_APPEND);
+    env->propSetInt(map, "TCM_procTime", duration, PROPAPPENDMODE_APPEND);
+
+    return dst;
+}
 
 PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 {
+    if (debug) {
+        return getFrameDebug(n, env);
+    }
+
     PVideoFrame src = child->GetFrame(n, env);
 
     PVideoFrame dst;
@@ -248,14 +344,6 @@ PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
 
     if (isV8) {
         delete b;
-    }
-
-    if (debug) {
-        auto map = env->getFramePropsRW(dst);
-        env->propSetInt(map, "TCM_gbRadius", gbRadius, PROPAPPENDMODE_APPEND);
-        env->propSetFloatArray(map, "TCM_gbKernel", dbgKernel, gbRadius * 2 + 1);
-        env->propSetFloat(map, "TCM_scale", scale, PROPAPPENDMODE_APPEND);
-        env->propSetData(map, "TCM_opt", opt.c_str(), opt.length(), PROPAPPENDMODE_APPEND);
     }
 
     return dst;

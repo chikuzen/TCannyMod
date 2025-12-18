@@ -139,6 +139,8 @@ class TCannyM : public GenericVideoFilter {
     write_gradient_direction_t writeGradientDirection;
     write_edge_direction_t writeEdgeDirection;
 
+    PVideoFrame getFrameDebug(int n, ise_t* env);
+
 public:
     TCannyM(PClip child, int mode, float sigma, float th_min, float th_max,
             int chroma, bool sobel, float scale, arch_t arch, const char* name,

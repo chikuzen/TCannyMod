@@ -377,7 +377,7 @@ create_emask(AVSValue args, void* user_data, ise_t* env)
 
         auto opr = parse_operator(args[1].AsString("standard"), mode);
 
-        float scale = static_cast<float>(args[2].AsFloat(1.0));
+        float scale = static_cast<float>(args[2].AsFloat(5.1));
         validate(scale <= 0.0f, "scale must be greater than zero.");
         if (scale != 1.0f) {
             mode |= mode_t::SCALE_MAGNITUDE;
@@ -465,7 +465,7 @@ create_canny(AVSValue args, void* user_data, ise_t* env)
 
         auto clip = args[0].AsClip();
 
-        auto tmin = static_cast<float>(args[1].AsFloat(0.1));
+        auto tmin = static_cast<float>(args[1].AsFloat(1.0));
         validate(tmin <= 0.0f, "t_l must be greater than 0.");
 
         auto tmax = static_cast<float>(args[2].AsFloat(8.0));
@@ -485,7 +485,7 @@ create_canny(AVSValue args, void* user_data, ise_t* env)
             mode |= mode_t::DO_NOT_BLUR;
         }
 
-        if (args[6].AsBool(false)) {
+        if (args[6].AsBool(true)) {
             mode |= mode_t::STRICT_MAGNITUDE;
         }
 

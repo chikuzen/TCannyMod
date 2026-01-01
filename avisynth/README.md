@@ -1,12 +1,13 @@
 # TCannyMod - Canny edge detection filter for Avisynth2.6.0 / Avisynth+
 
-	TCannyMod is an Avisynth filter plugin rewritten from scratch to Avisynth2.6 based on tcanny written by Kevin Stone(a.k.a. tritical).
+	TCannyMod is an Avisynth filter plugin rewritten from scratch to
+	Avisynth2.6 / AviSynth+ based on tcanny written by Kevin Stone(a.k.a. tritical).
 
 
 ### Syntax:
 ```
-TCannyMod(clip, int "mode", float "sigma", float "t_h", float "t_l",
-		  bool "sobel", int "chroma", float gmmax)
+TCannyMod(clip, float "t_h", float "t_l", string "operator", float "scale",
+		  float "sigma", bool "strict", int "chroma", int "opt", bool "debug")
 ```
 
 	- info:
@@ -14,29 +15,33 @@ TCannyMod(clip, int "mode", float "sigma", float "t_h", float "t_l",
 
 	- parameters:
 
-		- clip: planar 8bit formats only.
-
-		- mode" sets output format (default = 0)
-			- 0: thresholded edge map (255 for edge, 0 for non-edge)
-			- 1: gradient magnitude map.
-			- 2: edge pixel only gradient direction map (non-edge pixels set to 0)
-			- 3: gradient direction map
-				Gradient direction are normarized to 31, 63, 127 and 255.
-				31 = horizontal
-				63 = 45' up
-				127 = vertical
-				255 = 45' down
-			- 4: Gaussian blured frame.
-
-		- sigma: standard deviation of gaussian blur.
-				0 means not bluring before edge detection.
-				(0 <= sigma <= 2.83, default = 1.5)
-
-		- t_h: high gradient magnitude threshold for hysteresis (default = 8.0)
+		- clip: planar formats only.
 
 		- t_l: low gradient magnitude threshold for hysteresis (default = 1.0)
 
-		- sobel: use Sobel operator instead of [1, 0, -1] for edge detection. (default = false)
+		- t_h: high gradient magnitude threshold for hysteresis (default = 8.0)
+
+		- operator: specify operator for edge detection. (default = "standard")
+			"standard": use "0 1 0" operator.
+			"sobel": use "1 2 1" operator.
+			"X Y Z": use "X Y Z" operator.
+
+			               [X,  Y,  Z,              [-X, 0, X,
+			"X Y Z" means   0,  0,  0,  for gy and   -Y, 0, Y, for gx.
+			               -X, -Y, -Z]               -Z, 0, Z]
+
+			X, Y and Z must be floats or integers.
+
+		- scale: scaling value for gradient magnitude. (default = 1.0)
+
+		- sigma: standard deviation of gaussian blur.
+				0 means not bluring before edge detection.
+				(0 <= sigma, default = 1.5)
+
+		- strict: How to calculate gradient magnitude.
+			true: sqrt(gx^2 + gy^2)
+			false: abs(gx) + abs(gy)
+			true is a bit slower than false. (default = true)
 
 		- chroma: processing of chroma (default = 0)
 			0 - not processing.
@@ -45,20 +50,22 @@ TCannyMod(clip, int "mode", float "sigma", float "t_h", float "t_l",
 			3 - fill with 0x80(128). output is grayscale.
 			4 - fill with 0.
 
-		- gmmax: used for scaling gradient magnitude into [0,255] for mode=1 (default = 255)
-				gmmax is internally set to 1.0 if you set it to < 1.0.
-
 		- opt: specify which CPU optimization are used (default = auto.)
-			 0, 1: forth SSE4.1 + SSE2 + SSE routine.
-			 2: use AVX2 + FMA3 + AVX routine.
+			 0: forth NO SIMD optimization routine.
+			 1: forth SSE4.1 + SSE2 + SSE routine.
+			 2: forth AVX2 + FMA3 + AVX routine.
+			 others: use AVX512 routine.
+
+		- debug: append debug information to each frame as frame properties.
+				procTime is the time (in microseconds) spent processing the main loop for that frame.
 
 
 
 ```
-GBlur(clip, float "sigma", int "chroma")
+GBlur2(clip, float "sigma", int "chroma", int "opt", bool "debug")
 ```
 	- info:
-		Gaussian blur filter. Just an alias of TCannyMod(mode=4).
+		Gaussian blur filter.
 
 	- parameters:
 
@@ -70,51 +77,46 @@ GBlur(clip, float "sigma", int "chroma")
 
 		- opt: same as TCannyMod. (default = auto)
 
+		- debug: same as TCannyMod. (default = false)
+
 
 ```
-EMask(clip, float "sigma", float "gmmax", int "chroma",
-      bool "sobel", int "opt")
+EMask(clip, string "operator", float "scale", float "sigma", int "chroma",
+	 int "opt", bool "debug")
 ```
 	- info:
-		Generate gradient magnitude edge map. Just an alias of TCannyMod(mode=1).
+		Generate gradient magnitude edge map.
 
 	- parameters:
 
 		- clip: same as TCannyMod.
 
+		- operator: same as TCannyMod. (default = "standard")
+
+		- scale: same as TCannyMod. (default = 5.1)
+
 		- sigma: same as TCannyMod. (default = 1.5)
 
-		- gmmax: same as TCannyMod. (default = 50.0)
+		- strict: same as TCannyMod. (default = false)
 
 		- chroma: same as TCannyMod. (default = 1)
 
-		- sobel: same as TCannyMod. (default = false)
-
 		- opt: same as TCannyMod. (default = auto)
 
-
+		- debug: same as TCannyMod. (default = false)
 
 ### Note:
-
 	- TCannyMod requires appropriate memory alignments.
 	  Thus, if you want to crop the left side of your source clip before this filter,
 	  you have to set crop(align=true).
 
-	- Probabry, this filter is able to work on Avisynth+'s "MT_NICE_FILTER" mode.(from v1.0.0)
-
-	- TCannyMod_avx2.dll is compiled with /arch:AVX2.
-
-
 ### Requirements:
-
-	- Avisynth2.6.0/Avisynth+3.7.3 or greater
-	- Windows 10 / 11
+	- Avisynth2.6.0/Avisynth+3.7.3 or greater.
+	- Windows 7 sp1 or later.
 	- Visual C++ Redistributable package
 	- AVX capable CPU
 
-
 ### Changelog:
-
 	1.0.0 (20160326):
 		- Almost rewrite.
 		- VS2013 to VS2015.
@@ -142,6 +144,9 @@ EMask(clip, float "sigma", float "gmmax", int "chroma",
 	1.4.0 (20251216)
 		- Update avisynth.h to Avisynth+ 3.7.5,
 		- Remove Not AVX capable CPU support.
+
+	2.0.0 (20260102)
+		- rewrite to support AVX512 routine.
 
 Source code:
 

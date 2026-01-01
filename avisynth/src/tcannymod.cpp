@@ -3,7 +3,7 @@
 
   This file is part of TCannyMod
 
-  Copyright (C) 2013 Oka Motofumi
+  Copyright (C) 2026 Oka Motofumi
 
   Authors: Oka Motofumi (chikuzen.mo at gmail dot com)
 
@@ -23,411 +23,309 @@
 */
 
 
-#include <cmath>
-#include <algorithm>
-#include <stdexcept>
 #include <chrono>
 #include <format>
-#include "tcannymod.h"
-#include <avs/alignment.h>
-#include "cpu_check.h"
+#include <algorithm>
+#include "tcannymod.hpp"
+#include "utils.hpp"
 
 
-template <typename T>
-static inline T
-my_malloc(size_t size, size_t align, bool is_v8, AvsAllocType at,
-          ise_t* env) noexcept
-{
-    void* p = is_v8 ? env->Allocate(size, align, at) : avs_malloc(size, align);
-    return reinterpret_cast<T>(p);
-}
+struct Buffer {
+    ise_t* env;
+    bool isV8;
+    size_t size;
+    uint8_t* orig;
+    float* hbuff;
+    float* blurp;
+    float* emaskp;
+    int32_t* dirp;
+    Buffer(size_t hbsize, size_t blsize, size_t emsize, size_t dirsize,
+        size_t align, int hbpad, bool v8, ise_t* e) : env(e), isV8(v8),
+        size(emsize)
+    {
+        size_t total = hbsize + blsize + emsize + dirsize;
+        void* p = isV8 ? env->Allocate(total, align, AVS_POOLED_ALLOC)
+            : avs_malloc(total, align);
+        validate(!p, "failed to allocate temporal memory.");
 
-
-static inline void my_free(void* p, bool is_v8, ise_t* env) noexcept
-{
-    if (is_v8) {
-        env->Free(p);
-    } else {
-        avs_free(p);
+        orig = reinterpret_cast<uint8_t*>(p);
+        hbuff = reinterpret_cast<float*>(orig + hbpad);
+        blurp = reinterpret_cast<float*>(orig + hbsize);
+        emaskp = reinterpret_cast<float*>(orig + hbsize + blsize);
+        dirp = reinterpret_cast<int32_t*>(orig + hbsize + blsize + emsize);
     }
-    p = nullptr;
-}
-
-
-Buffers::Buffers(size_t gbtsize, size_t blsize, size_t emsize, size_t dirsize,
-    size_t hystsize, size_t align, bool ip, ise_t* e) :
-    env(e), isV8(ip)
-{
-    size_t total_size = gbtsize + blsize + emsize + dirsize + hystsize;
-    orig = my_malloc<uint8_t*>(
-        total_size, align, isV8, AVS_POOLED_ALLOC, env);
-
-    memset(orig, 0, total_size);
-    gbtp = reinterpret_cast<float*>(orig) + GB_MAX_LENGTH / 2;
-    blurp = reinterpret_cast<float*>(orig + gbtsize + align);
-    emaskp = reinterpret_cast<float*>(orig + gbtsize + blsize);
-    dirp = reinterpret_cast<int32_t*>(orig + gbtsize + blsize + emsize);
-    hystp = orig + total_size - hystsize;
+    ~Buffer()
+    {
+        if (isV8) {
+            env->Free(orig);
+        } else {
+            avs_free(orig);
+        }
+        orig = nullptr;
+        env = nullptr;
+    }
 };
 
 
-Buffers::~Buffers()
+PVideoFrame __stdcall TCannyMod::getFrameDebug(int n, ise_t* env)
 {
-    my_free(orig, isV8, env);
-    env = nullptr;
-};
+    using namespace std::chrono;
 
+    Buffer buff(hbSize, blSize, emSize, dirSize, align, hbPad, true, env);
+    auto src = child->GetFrame(n, env);
+    auto dst = env->NewVideoFrameP(vi, &src);
 
-static inline void validate(bool cond, const char* msg)
-{
-    if (cond)
-        throw std::runtime_error(msg);
-}
+    auto start = system_clock::now();
 
+    mainLoop(src, dst, buff, env);
 
-static void __stdcall
-set_gb_kernel(float sigma, int& radius, float* kernel, double* dbg)
-{
-    radius = std::max(static_cast<int>(sigma * 3.0f + 0.5f), 1);
-    int length = radius * 2 + 1;
-    validate(length > GB_MAX_LENGTH, "sigma is too large.");
+    auto end = system_clock::now();
+    auto pt = duration_cast<microseconds>(end - start).count();
 
-    float sum = 0.0f;
-    for (int i = -radius; i <= radius; i++) {
-        float weight = std::exp((-1 * i * i) / (2.0f * sigma * sigma));
-        kernel[i + radius] = weight;
-        sum += weight;
-    }
-    for (int i = 0; i < length; ++i) {
-        kernel[i] /= sum;
-        dbg[i] = static_cast<double>(kernel[i]);
-    }
-}
-
-
-TCannyM::TCannyM(PClip ch, int m, float sigma, float tmin, float tmax, int c,
-    bool sobel, float s, arch_t arch, const char* n, bool is_v8, bool use_cache,
-    bool debug) : GenericVideoFilter(ch), mode(m), gbRadius(0), th_min(tmin),
-    th_max(tmax), chroma(c), name(n), scale(s), isV8(is_v8), buff(nullptr),
-    calc_dir(true), debug(debug)
-{
-    validate(!vi.IsPlanar(), "Planar format only.");
-    memset(gbKernel, 0, sizeof(gbKernel));
-    memset(dbgKernel, 0, sizeof(dbgKernel));
-
-    numPlanes = (vi.IsY8() || chroma == 0) ? 1 : 3;
-    align = arch == HAS_AVX512 ? 64 : 32;
-    opt = arch == HAS_SSE41 ? "SSE4.1" : "AVX2";
-
-    if (sigma > 0.0f) {
-        set_gb_kernel(sigma, gbRadius, gbKernel, dbgKernel);
-
-        size_t length = (gbRadius * 2 + 1);
-    }
-
-    gbtPitch = ((8 + vi.width + 8) * sizeof(float) + align - 1) & ~(align - 1);
-    blurPitch = ((align + (vi.width + 1) * sizeof(float)) + align - 1) & ~(align - 1);
-    emaskPitch = (vi.width * sizeof(float) + align - 1) & ~(align - 1);
-    dirPitch = (vi.width * sizeof(int32_t) + align - 1) & ~(align - 1);
-    hystPitch = (vi.width + align - 1) & ~(align - 1);
-
-    gbtSize = gbtPitch * 6;
-    blurSize = blurPitch * (vi.height + 5);
-    emaskSize = mode == 4 ? 0 : emaskPitch * (vi.height + 1);
-    dirSize = (mode == 1 || mode == 4) ? 0 : dirPitch * (vi.height + 1);
-    hystSize = (mode == 0 || mode == 2) ? hystPitch * vi.height : 0;
-
-    gbtPitch /= sizeof(float);
-    blurPitch /= sizeof(float);
-    emaskPitch /= sizeof(float);
-    dirPitch /= sizeof(int32_t);
-
-    gaussianBlur = get_gaussian_blur(gbRadius, use_cache, arch);
-
-    bool calc_dir = mode != 1 && mode != 4;
-    edgeDetection = get_edge_detection(sobel, calc_dir, use_cache, arch);
-
-    nonMaximumSuppression = get_non_max_suppress(arch);
-
-    writeBluredFrame = get_write_gradient_mask(false, use_cache, arch);
-
-    writeGradientMask = get_write_gradient_mask(scale != 1.0f, use_cache, arch);
-
-    writeGradientDirection = get_write_gradient_direction(use_cache, arch);
-
-    writeEdgeDirection = get_write_edge_direction(use_cache, arch);
-
-    if (!isV8) {
-        buff = new Buffers(gbtSize, blurSize, emaskSize, dirSize, hystSize,
-                           align, false, nullptr);
-    }
-}
-
-
-TCannyM::~TCannyM()
-{
-    if (!isV8) {
-        delete buff;
-    }
-}
-
-PVideoFrame TCannyM::getFrameDebug(int n, ise_t* env)
-{
-    PVideoFrame src = child->GetFrame(n, env);
-    PVideoFrame dst;
-    Buffers* b = buff;
-    b = new Buffers(gbtSize, blurSize, emaskSize, dirSize, hystSize, align,
-        true, env);
-    if (!b || !b->orig) {
-        env->ThrowError("%s: failed to allocate buffer.", name);
-    }
-    dst = env->NewVideoFrameP(vi, &src);
-
-    auto start = std::chrono::high_resolution_clock::now();
-
-    static const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
-
-    for (int i = 0; i < numPlanes; i++) {
-
-        const int p = planes[i];
-        const int width = src->GetRowSize(p);
-        const int height = src->GetHeight(p);
-        const int src_pitch = src->GetPitch(p);
-        const uint8_t* srcp = src->GetReadPtr(p);
-        uint8_t* dstp = dst->GetWritePtr(p);
-        const int dst_pitch = dst->GetPitch(p);
-
-        if (i > 0 && chroma > 1) {
-            if (chroma == 2) {
-                env->BitBlt(dstp, dst_pitch, srcp, src_pitch, width, height);
-            } else {
-                memset(dstp, chroma == 3 ? 0x80 : 0x00, dst_pitch * height);
-            }
-            continue;
-        }
-
-        gaussianBlur(gbRadius, gbKernel, b->gbtp, gbtPitch, b->blurp, blurPitch,
-            srcp, src_pitch, width, height);
-        if (mode == 4) {
-            writeBluredFrame(b->blurp, dstp, width, height, dst_pitch,
-                blurPitch, 1.0);
-            continue;
-        }
-
-        edgeDetection(b->blurp, blurPitch, b->emaskp, emaskPitch, b->dirp,
-            dirPitch, width, height);
-
-        if (mode == 1) {
-            writeGradientMask(b->emaskp, dstp, width, height, dst_pitch,
-                emaskPitch, scale);
-            continue;
-        }
-        if (mode == 3) {
-            writeGradientDirection(b->dirp, dstp, dirPitch, dst_pitch, width,
-                height);
-            continue;
-        }
-
-        nonMaximumSuppression(b->emaskp, emaskPitch, b->dirp, dirPitch, b->blurp,
-            blurPitch, width, height);
-
-        hysteresis(b->hystp, hystPitch, b->blurp, blurPitch, width, height,
-            th_min, th_max);
-
-        if (mode == 2) {
-            writeEdgeDirection(b->dirp, b->hystp, dstp, dirPitch, hystPitch,
-                dst_pitch, width, height);
-            continue;
-        }
-
-        env->BitBlt(dstp, dst_pitch, b->hystp, hystPitch, width, height);
-    }
-
-    auto end = std::chrono::high_resolution_clock::now();
-
-    delete b;
-
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
-        end - start).count();
 
     auto map = env->getFramePropsRW(dst);
-    env->propSetInt(map, "TCM_mode", mode, PROPAPPENDMODE_APPEND);
-    env->propSetInt(map, "TCM_gbRadius", gbRadius, PROPAPPENDMODE_APPEND);
-    env->propSetFloatArray(map, "TCM_gbKernel", dbgKernel, gbRadius * 2 + 1);
-    env->propSetFloat(map, "TCM_scale", scale, PROPAPPENDMODE_APPEND);
-    env->propSetDataH(map, "TCM_opt", opt.c_str(), opt.length(),
-        AVSPropDataTypeHint::PROPDATATYPEHINT_UTF8, PROPAPPENDMODE_APPEND);
-    env->propSetInt(map, "TCM_procTime", duration, PROPAPPENDMODE_APPEND);
+    env->propSetInt(map, "TCM_gbradius", radius, PROPAPPENDMODE_APPEND);
+    env->propSetFloatArray(map, "TCM_gbkernel", dbgweights.data(),
+        static_cast<int>(dbgweights.size()));
+    env->propSetDataH(map, "TCM_opt", opt.c_str(), int(opt.length()),
+        PROPDATATYPEHINT_UTF8, PROPAPPENDMODE_APPEND);
+    env->propSetInt(map, "GB_procTime", pt, PROPAPPENDMODE_APPEND);
 
     return dst;
 }
 
-PVideoFrame __stdcall TCannyM::GetFrame(int n, ise_t* env)
+
+void TCannyMod::mainLoop(PVideoFrame& src, PVideoFrame& dst, Buffer& buff,
+    ise_t* env)
 {
-    if (debug) {
+    const int p[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
+
+    for (int i = 0; i < numPlanes; ++i) {
+        auto plane = p[i];
+        auto srcp = src->GetReadPtr(plane);
+        auto spitch = src->GetPitch(plane) / bytes;
+        auto width = src->GetRowSize(plane) / bytes;
+        auto height = src->GetHeight(plane);
+        auto dstp = dst->GetWritePtr(plane);
+        auto dpitch = dst->GetPitch(plane) / bytes;
+
+        if (i > 0) {
+            if (mode & mode_t::COPY_CHROMA) {
+                env->BitBlt(dstp, dpitch * bytes, srcp, spitch * bytes,
+                    width * bytes, height);
+                continue;
+            } else if (mode & mode_t::FILL_HALF_CHROMA) {
+                uint32_t* d = reinterpret_cast<uint32_t*>(dstp);
+                std::fill_n(d, dpitch * bytes * height / sizeof(uint32_t),
+                    get_halfvalue(bits));
+                continue;
+            } else if (mode & mode_t::FILL_ZERO_CHROMA) {
+                memset(dstp, dpitch * bytes * height, 0);
+                continue;
+            }
+        }
+        if (mode & mode_t::DO_BLUR_ONLY) {
+            gaussianBlur(srcp, spitch, buff.hbuff, hbPitch, dstp, dpitch,
+                width, height, radius, gbweights.data(), maxval);
+            continue;
+        }
+        gaussianBlur(srcp, spitch, buff.hbuff, hbPitch, buff.blurp,
+            blPitch, width, height, radius, gbweights.data(), maxval);
+
+        if ((mode & mode_t::CALC_DIRECTION) == 0) {
+            edgeMask(buff.blurp, blPitch, dstp, dpitch, opr, scale,
+                width, height, maxval, nullptr, 0);
+            continue;
+        }
+
+        edgeMask(buff.blurp, blPitch, buff.emaskp, emPitch, opr, scale, width,
+            height, maxval, buff.dirp, dirPitch);
+
+        if ((mode & mode_t::SHOW_DIRECTION)) {
+            writeDirections(buff.dirp, dirPitch, dstp, dpitch, width, height);
+            continue;
+        }
+
+        nonMaximumSuppression(buff.emaskp, emPitch, buff.dirp, dirPitch,
+            buff.blurp, blPitch, width, height);
+
+        hysteresis(dstp, dpitch, buff.blurp, blPitch, width, height, tmin, tmax,
+            maxval);
+    }
+}
+
+
+PVideoFrame __stdcall TCannyMod::GetFrame(int n, ise_t* env)
+{
+    if (mode & mode_t::SET_DEBUG_INFO) {
         return getFrameDebug(n, env);
     }
 
-    PVideoFrame src = child->GetFrame(n, env);
+    bool isV8 = mode & mode_t::AT_LEAST_V8;
+    Buffer buff(hbSize, blSize, emSize, dirSize, align, hbPad, isV8, env);
+    auto src = child->GetFrame(n, env);
+    auto dst = isV8 ? env->NewVideoFrameP(vi, &src) : env->NewVideoFrame(vi);
 
-    PVideoFrame dst;
-    Buffers* b = buff;
-
-    if (isV8) {
-        b = new Buffers(gbtSize, blurSize, emaskSize, dirSize, hystSize, align,
-                        true, env);
-        if (!b || !b->orig) {
-            env->ThrowError("%s: failed to allocate buffer.", name);
-        }
-        dst = env->NewVideoFrameP(vi, &src);
-    } else {
-        dst = env->NewVideoFrame(vi, align);
-    }
-
-    static const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
-
-    for (int i = 0; i < numPlanes; i++) {
-
-        const int p = planes[i];
-        const int width = src->GetRowSize(p);
-        const int height = src->GetHeight(p);
-        const int src_pitch = src->GetPitch(p);
-        const uint8_t* srcp = src->GetReadPtr(p);
-        uint8_t *dstp = dst->GetWritePtr(p);
-        const int dst_pitch = dst->GetPitch(p);
-
-        if (i > 0 && chroma > 1) {
-            if (chroma == 2) {
-                env->BitBlt(dstp, dst_pitch, srcp, src_pitch, width, height);
-            } else {
-                memset(dstp, chroma == 3 ? 0x80 : 0x00, dst_pitch * height);
-            }
-            continue;
-        }
-
-        gaussianBlur(gbRadius, gbKernel, b->gbtp, gbtPitch, b->blurp, blurPitch,
-            srcp, src_pitch, width, height);
-        if (mode == 4) {
-            writeBluredFrame(b->blurp, dstp, width, height, dst_pitch,
-                blurPitch, 1.0);
-            continue;
-        }
-
-        edgeDetection(b->blurp, blurPitch, b->emaskp, emaskPitch, b->dirp,
-            dirPitch, width, height);
-
-        if (mode == 1) {
-            writeGradientMask(b->emaskp, dstp, width, height, dst_pitch,
-                emaskPitch, scale);
-            continue;
-        }
-        if (mode == 3) {
-            writeGradientDirection(b->dirp, dstp, dirPitch, dst_pitch, width,
-                height);
-            continue;
-        }
-
-        nonMaximumSuppression(b->emaskp, emaskPitch, b->dirp, dirPitch, b->blurp,
-            blurPitch, width, height);
-
-        hysteresis(b->hystp, hystPitch, b->blurp, blurPitch, width, height,
-            th_min, th_max);
-
-        if (mode == 2) {
-            writeEdgeDirection(b->dirp, b->hystp, dstp, dirPitch, hystPitch,
-                dst_pitch, width, height);
-            continue;
-        }
-
-        env->BitBlt(dstp, dst_pitch, b->hystp, hystPitch, width, height);
-    }
-
-    if (isV8) {
-        delete b;
-    }
+    mainLoop(src, dst, buff, env);
 
     return dst;
 }
 
-static inline bool has_avx(ise_t* env) noexcept
-{
-    auto f = env->GetCPUFlags();
-    return f & ::CPUF_AVX;
-}
 
-
-static arch_t get_arch(int opt, ise_t* env) noexcept
+void TCannyMod::generateWeights(float sigma)
 {
-    if (opt == 0 || opt == 1) {
-        return HAS_SSE41;
+    int w = vi.width, h = vi.height;
+    if ((mode & mode_t::PROC_CHROMA) && numPlanes > 1) {
+        if (vi.IsYV411()) w /= 4;
+        if (vi.Is422() || vi.Is420()) w /= 2;
+        if (vi.Is420()) h /= 2;
     }
-    if (opt == 2 && has_avx2()) {
-        return HAS_AVX2;
+
+    auto t = static_cast<int>(sigma * 3 + 0.5f);
+    radius = std::max(1, t);
+    validate(std::min(w, h) < radius, "sigma is too large");
+
+    int length = radius * 2 + 1;
+    gbweights.resize(length, 0.0f);
+    dbgweights.resize(length, 0.0);
+
+    float sum = 0.0f;
+    for (int r = -radius; r <= radius; ++r) {
+        float weight = std::exp((-1 * r * r) / (2.0f * sigma * sigma));
+        gbweights[r + radius] = weight;
+        sum += weight;
     }
-    //return has_avx512() ? HAS_AVX512 : HAS_AVX2;
-    return HAS_AVX2;
+    for (int i = 0; i < length; ++i) {
+        gbweights[i] /= sum;
+        dbgweights[i] = gbweights[i];
+    }
 }
 
 
-static float calc_scale(double gmmax) noexcept
+TCannyMod::TCannyMod(PClip c, float _tmin, float _tmax, float _sc,
+    operator_t& _o, float sigma, int _m, arch_t _a) :
+    GenericVideoFilter(c), tmin(_tmin), tmax(_tmax), scale(_sc), opr(_o),
+    mode(_m), arch(_a), radius(0), hbPitch(0), hbPad(0), blPitch(0),
+    emPitch(0), dirPitch(0), hbSize(0), blSize(0), emSize(0), dirSize(0),
+    edgeMask(nullptr), writeDirections(nullptr), hysteresis(nullptr),
+    nonMaximumSuppression(nullptr)
 {
-    return static_cast<float>(255.0 / std::min(std::max(gmmax, 1.0), 255.0));
+    validate(!vi.IsPlanar(), "Planar format only.");
+    bits = vi.BitsPerComponent();
+    bytes = (bits + 7) / 8;
+    numPlanes = (vi.IsY() || mode & mode_t::DO_NOT_TOUCH_CHROMA) ? 1 : 3;
+    maxval = bits == 32 ? 1.0f :
+        vi.IsRGB() ? 1.0f * ((1 << bits) - 1) : 1.0f * (0xFF << (bits - 8));
+
+    opt = a2s(arch);
+
+    align = 64;
+    int bm = align - 1;
+
+    if ((mode & mode_t::DO_NOT_BLUR) == 0) {
+        generateWeights(sigma);
+        hbPad = (radius * sizeof(float) + bm) & ~bm;
+        hbPitch = (2 * hbPad + (vi.width * sizeof(float) + bm)) & ~bm;
+        hbSize = hbPitch * (arch == USE_AVX512 ? 6 : 4);
+        hbPitch /= sizeof(float);
+    }
+
+    if (mode & mode_t::DETECT_EDGE) {
+        blPitch = (vi.width * sizeof(float) + bm) & ~bm;
+        blSize = blPitch * vi.height;
+        blPitch /= sizeof(float);
+    }
+
+    if (mode & mode_t::CALC_DIRECTION) {
+        dirPitch = blPitch;
+        dirSize = blSize;
+    }
+
+    if (mode & GENERATE_CANNY_IMAGE) {
+        emPitch = blPitch;
+        emSize = blSize;
+    }
+
+    gaussianBlur = get_gblur(bytes, arch, radius, mode);
+
+    edgeMask = get_emask(bytes, arch, mode);
+
+    writeDirections = get_write_dir(bytes);
+
+    nonMaximumSuppression = get_nms(arch);
+
+    hysteresis = get_hysteresis(bytes);
+
 }
 
 
-static bool is_v8orgreater(ise_t* env)
+static void set_chroma_mode(int chroma, int& mode)
 {
+    int ret = 0;
+    switch (chroma) {
+    case 0: mode |= mode_t::DO_NOT_TOUCH_CHROMA; return;
+    case 1: mode |= mode_t::PROC_CHROMA; return;
+    case 2: mode |= mode_t::COPY_CHROMA; return;
+    case 3: mode |= mode_t::FILL_HALF_CHROMA; return;
+    case 4: mode |= mode_t::FILL_ZERO_CHROMA; return;
+    }
+}
+
+
+arch_t get_arch(int opt)
+{
+    if (opt == 0) {
+        return arch_t::NO_SIMD;
+    }
+    if (opt == 1) {
+        if (has_sse41()) return arch_t::USE_SSE4;
+        return arch_t::NO_SIMD;
+    }
+    if (opt == 2) {
+        if (has_avx2()) return arch_t::USE_AVX2;
+        if (has_sse41()) return arch_t::USE_SSE4;
+        return arch_t::NO_SIMD;
+    }
+    if (has_avx512()) return arch_t::USE_AVX512;
+    if (has_avx2()) return arch_t::USE_AVX2;
+    if (has_sse41()) return arch_t::USE_SSE4;
+    return arch_t::NO_SIMD;
+}
+
+
+static operator_t parse_operator(const char* o, int& mode)
+{
+    std::string ostring(o);
+    if (ostring == "standard") {
+        mode |= mode_t::USE_STANDARD_OPERATOR;
+        return operator_t{ 0.0f, 1.0f, 0.0f };
+    } else if (ostring == "sobel") {
+        mode |= mode_t::USE_SOBEL_OPERATOR;
+        return operator_t{ 1.0f, 2.0f, 1.0f };
+    } else if (ostring == "prewitt") {
+        mode |= mode_t::USE_CUSTOM_OPERATOR;
+        return operator_t{ 1.0f, 1.0f, 1.0f };
+    }
+
     try {
-        env->CheckVersion(8);
-        return true;
-    } catch (const AvisynthError&) {
-        return false;
-    }
-}
+        auto v = split(ostring, " ");
+        validate(v.size() != 3, nullptr);
 
-static AVSValue __cdecl
-create_tcannymod(AVSValue args, void* user_data, ise_t* env)
-{
-    try {
-        validate(!has_avx(), "This filter requires AVX.");
-
-        int mode = args[1].AsInt(0);
-        validate(mode < 0 || mode > 4, "mode must be between 0 and 4.");
-
-        float sigma = static_cast<float>(args[2].AsFloat(1.5f));
-        validate(sigma < 0.0f, "sigma must be greater than zero.");
-
-        float tmin = static_cast<float>(args[4].AsFloat(0.1f));
-        validate(tmin < 0.0f, "t_l must be greater than zero.");
-
-        float tmax = static_cast<float>(args[3].AsFloat(8.0f));
-        validate(tmax < tmin, "t_h must be greater than t_l.");
-
-        int chroma = args[6].AsInt(0);
-        validate(chroma < 0 || chroma > 4,
-                 "chroma must be set to 0, 1, 2, 3 or 4.");
-
-        float scale = calc_scale(args[7].AsFloat(255.0));
-
-        arch_t arch = get_arch(args[8].AsInt(-1), env);
-
-        bool cache = args[9].AsBool(false);
-
-        bool debug = args[10].AsBool(false);
-
-        bool is_v8 = is_v8orgreater(env);
-        if (!is_v8) {
-            debug = false;
+        operator_t opr;
+        opr[0] = std::stof(v[0]);
+        opr[1] = std::stof(v[1]);
+        opr[2] = std::stof(v[2]);
+        if (opr[0] == 0.0f && opr[1] == 1.0f && opr[2] == 0.0f) {
+            mode |= mode_t::USE_STANDARD_OPERATOR;
+        } else if (opr[0] == 1.0f && opr[1] == 2.0f && opr[2] == 1.0f) {
+            mode |= mode_t::USE_SOBEL_OPERATOR;
+        } else {
+            mode |= mode_t::USE_CUSTOM_OPERATOR;
         }
-
-        return new TCannyM(args[0].AsClip(), mode, sigma, tmin, tmax, chroma,
-                           args[5].AsBool(false), scale, arch, "TCannyMod",
-                           is_v8, cache, debug);
-
-    } catch (std::runtime_error& e) {
-        env->ThrowError("TCannyMod: %s", e.what());
+        return opr;
+    } catch (std::exception&) {
+        throw std::runtime_error("invalid operator is set.");
     }
-    return 0;
 }
 
 
@@ -435,31 +333,32 @@ static AVSValue __cdecl
 create_gblur(AVSValue args, void* user_data, ise_t* env)
 {
     try {
-        validate(!has_avx(), "This filter requires AVX.");
-
-        float sigma = (float)args[1].AsFloat(0.5);
-        validate(sigma < 0.0f, "sigma must be greater than zero.");
-
-        int chroma = args[2].AsInt(0);
-        validate(chroma < 0 || chroma > 4,
-                 "chroma must be set to 0, 1, 2, 3 or 4.");
-
-        arch_t arch = get_arch(args[3].AsInt(-1), env);
-
-        bool cache = args[4].AsBool(false);
-
-        bool debug = args[5].AsBool(false);
-
-        bool is_v8 = is_v8orgreater(env);
-        if (!is_v8) {
-            debug = false;
+        int mode = mode_t::DO_BLUR_ONLY;
+        if (user_data != nullptr) {
+            mode |= mode_t::AT_LEAST_V8;
         }
 
-        return new TCannyM(args[0].AsClip(), 4, sigma, 1.0f, 1.0f, chroma,
-                           false, 1.0f, arch, "GBlur", is_v8, cache, debug);
+        auto clip = args[0].AsClip();
 
-    } catch (std::runtime_error& e) {
-        env->ThrowError("GBlur: %s", e.what());
+        float sigma = static_cast<float>(args[1].AsFloat(1.50));
+        validate(sigma <= 0.0f, "sigma must be greater than zero.");
+
+        auto chroma = args[2].AsInt(0);
+        validate(chroma < 0 || chroma > 4, "chroma must be 0, 1, 2, 3 or 4");
+        set_chroma_mode(chroma, mode);
+
+        auto arch = get_arch(args[3].AsInt(-1));
+
+        if (args[4].AsBool(false) && user_data != nullptr) {
+            mode |= mode_t::SET_DEBUG_INFO;
+        }
+
+        operator_t o = parse_operator("standard", mode);
+
+        return new TCannyMod(clip, 0.0f, 0.0f, 1.0f, o, sigma, mode, arch);
+
+    } catch (std::exception& e) {
+        env->ThrowError("GBlur2: %s", e.what());
     }
     return 0;
 }
@@ -469,79 +368,197 @@ static AVSValue __cdecl
 create_emask(AVSValue args, void* user_data, ise_t* env)
 {
     try {
-        validate(!has_avx(), "This filter requires AVX.");
-
-        float sigma = (float)args[1].AsFloat(1.5);
-        validate(sigma < 0.0f, "sigma must be greater than zero.");
-
-        float scale = calc_scale(args[2].AsFloat(50.0));
-
-        int chroma = args[3].AsInt(0);
-        validate(chroma < 0 || chroma > 4,
-            "chroma must be set to 0, 1, 2, 3 or 4.");
-
-        bool sobel = args[4].AsBool(false);
-
-        arch_t arch = get_arch(args[5].AsInt(-1), env);
-
-        bool cache = args[6].AsBool(true);
-
-        bool debug = args[7].AsBool(false);
-
-        bool is_v8 = is_v8orgreater(env);
-        if (!is_v8) {
-            debug = false;
+        int mode = mode_t::DETECT_EDGE;
+        if (user_data != nullptr) {
+            mode |= mode_t::AT_LEAST_V8;
         }
 
-        return new TCannyM(args[0].AsClip(), 1, sigma, 1.0f, 1.0f, chroma,
-                           sobel, scale, arch, "EMask", is_v8, cache, debug);
+        auto clip = args[0].AsClip();
 
-    } catch (std::runtime_error& e) {
+        auto opr = parse_operator(args[1].AsString("standard"), mode);
+
+        float scale = static_cast<float>(args[2].AsFloat(1.0));
+        validate(scale <= 0.0f, "scale must be greater than zero.");
+        if (scale != 1.0f) {
+            mode |= mode_t::SCALE_MAGNITUDE;
+        }
+
+        float sigma = static_cast<float>(args[3].AsFloat(0.50));
+        validate(sigma < 0.0f, "sigma must be greater than or equal to zero.");
+        if (sigma == 0.0f) {
+            mode |= mode_t::DO_NOT_BLUR;
+        }
+
+        if (args[4].AsBool(false)) {
+            mode |= mode_t::STRICT_MAGNITUDE;
+        }
+
+        auto chroma = args[5].AsInt(0);
+        validate(chroma < 0 || chroma > 4, "chroma must be 0, 1, 2, 3 or 4");
+        set_chroma_mode(chroma, mode);
+
+        auto arch = get_arch(args[6].AsInt(-1));
+
+        if (args[7].AsBool(false) && user_data != nullptr) {
+            mode |= mode_t::SET_DEBUG_INFO;
+        }
+
+        return new TCannyMod(clip, 0, 0, scale, opr, sigma, mode, arch);
+
+    } catch (std::exception& e) {
         env->ThrowError("EMask: %s", e.what());
     }
     return 0;
 }
 
 
-const AVS_Linkage* AVS_linkage = nullptr;
+static AVSValue __cdecl
+create_dirmap(AVSValue args, void* user_data, ise_t* env)
+{
+    try {
+        int mode = mode_t::DETECT_EDGE | mode_t::CALC_DIRECTION
+            | mode_t::SHOW_DIRECTION;
+
+        if (user_data != nullptr) {
+            mode |= mode_t::AT_LEAST_V8;
+        }
+
+        auto clip = args[0].AsClip();
+
+        auto opr = parse_operator(args[1].AsString("standard"), mode);
+
+        float sigma = static_cast<float>(args[2].AsFloat(1.50));
+        validate(sigma < 0.0f, "sigma must be greater than or equal to zero.");
+        if (sigma == 0.0f) {
+            mode |= mode_t::DO_NOT_BLUR;
+        }
+
+        auto chroma = args[3].AsInt(0);
+        validate(chroma < 0 || chroma > 4, "chroma must be 0, 1, 2, 3 or 4");
+        set_chroma_mode(chroma, mode);
+
+        auto arch = get_arch(args[4].AsInt(-1));
+
+        if (args[5].AsBool(false) && user_data != nullptr) {
+            mode |= mode_t::SET_DEBUG_INFO;
+        }
+
+        return new TCannyMod(clip, 0, 0, 1.0f, opr, sigma, mode, arch);
+
+    } catch (std::exception& e) {
+        env->ThrowError("DirMap: %s", e.what());
+    }
+    return 0;
+}
 
 
-extern "C" __declspec(dllexport) const char * __stdcall
+static AVSValue __cdecl
+create_canny(AVSValue args, void* user_data, ise_t* env)
+{
+    try {
+        int mode = mode_t::DETECT_EDGE | mode_t::CALC_DIRECTION
+            | mode_t::GENERATE_CANNY_IMAGE;
+
+        if (user_data != nullptr) {
+            mode |= mode_t::AT_LEAST_V8;
+        }
+
+        auto clip = args[0].AsClip();
+
+        auto tmin = static_cast<float>(args[1].AsFloat(0.1));
+        validate(tmin <= 0.0f, "t_l must be greater than 0.");
+
+        auto tmax = static_cast<float>(args[2].AsFloat(8.0));
+        validate(tmax <= tmin, "t_h must be greater than t_l.");
+
+        auto opr = parse_operator(args[3].AsString("standard"), mode);
+
+        float scale = static_cast<float>(args[4].AsFloat(1.0));
+        validate(scale <= 0.0f, "scale must be greater than zero.");
+        if (scale != 1.0f) {
+            mode |= mode_t::SCALE_MAGNITUDE;
+        }
+
+        float sigma = static_cast<float>(args[5].AsFloat(1.50));
+        validate(sigma < 0.0f, "sigma must be greater than or equal to zero.");
+        if (sigma == 0.0f) {
+            mode |= mode_t::DO_NOT_BLUR;
+        }
+
+        if (args[6].AsBool(false)) {
+            mode |= mode_t::STRICT_MAGNITUDE;
+        }
+
+        auto chroma = args[7].AsInt(0);
+        validate(chroma < 0 || chroma > 4, "chroma must be 0, 1, 2, 3 or 4");
+        set_chroma_mode(chroma, mode);
+
+        auto arch = get_arch(args[8].AsInt(-1));
+
+        if (args[9].AsBool(false) && user_data != nullptr) {
+            mode |= mode_t::SET_DEBUG_INFO;
+        }
+
+        return new TCannyMod(clip, tmin, tmax, scale, opr, sigma, mode, arch);
+
+    } catch (std::exception& e) {
+        env->ThrowError("TCannyMod: %s", e.what());
+    }
+    return 0;
+}
+
+
+static const AVS_Linkage* AVS_linkage = nullptr;
+
+extern "C" __declspec(dllexport) const char* __stdcall
 AvisynthPluginInit3(ise_t* env, const AVS_Linkage* const vectors)
 {
     AVS_linkage = vectors;
 
+    bool isV8 = false;
+    try {
+        env->CheckVersion(8);
+        isV8 = true;
+    } catch (...) {
+        isV8 = false;
+    }
+
+    env->AddFunction("GBlur2",
+        /*0*/   "c"
+        /*1*/   "[sigma]f"
+        /*2*/   "[chroma]i"
+        /*3*/   "[opt]i"
+        /*4*/   "[debug]b", create_gblur, isV8 ? &isV8 : nullptr);
+
+    env->AddFunction("Emask",
+        /*0*/   "c"
+        /*1*/   "[operator]s"
+        /*2*/   "[scale]f"
+        /*3*/   "[sigma]f"
+        /*4*/   "[strict]b"
+        /*5*/   "[chroma]i"
+        /*6*/   "[opt]i"
+        /*7*/   "[debug]b", create_emask, isV8 ? &isV8 : nullptr);
+
+    env->AddFunction("DirMap",
+        /*0*/   "c"
+        /*1*/   "[operator]s"
+        /*2*/   "[sigma]f"
+        /*3*/   "[chroma]i"
+        /*4*/   "[opt]i"
+        /*5*/   "[debug]b", create_dirmap, isV8 ? &isV8 : nullptr);
+
     env->AddFunction("TCannyMod",
-             /*0*/   "c"
-             /*1*/   "[mode]i"
-             /*2*/   "[sigma]f"
-             /*3*/   "[t_h]f"
-             /*4*/   "[t_l]f"
-             /*5*/   "[sobel]b"
-             /*6*/   "[chroma]i"
-             /*7*/   "[gmmax]f"
-             /*8*/   "[opt]i"
-             /*9*/   "[use_cache]b"
-             /*10*/  "[debug]b", create_tcannymod, nullptr);
+        /*0*/   "c"
+        /*1*/   "[t_l]f"
+        /*2*/   "[t_h]f"
+        /*3*/   "[operator]s"
+        /*4*/   "[scale]f"
+        /*5*/   "[sigma]f"
+        /*6*/   "[strict]b"
+        /*7*/   "[chroma]i"
+        /*8*/   "[opt]i"
+        /*9*/   "[debug]b", create_canny, isV8 ? &isV8 : nullptr);
 
-    env->AddFunction("GBlur",
-             /*0*/   "c"
-             /*1*/   "[sigma]f"
-             /*2*/   "[chroma]i"
-             /*3*/   "[opt]i"
-             /*4*/   "[use_cache]b"
-             /*5*/   "[debug]b", create_gblur, nullptr);
-
-    env->AddFunction("EMask",
-             /*0*/   "c"
-             /*1*/   "[sigma]f"
-             /*2*/   "[gmmax]f"
-             /*3*/   "[chroma]i"
-             /*4*/   "[sobel]b"
-             /*5*/   "[opt]i"
-             /*6*/   "[use_cache]b"
-             /*7*/   "[debug]b", create_emask, nullptr);
-
-    return "Canny edge detection filter for Avisynth2.6/Avisynth+ ver."
-        TCANNY_M_VERSION;
+    return "Canny Edge Detection Filter for avisynth+ ver." TCANNY_M_VERSION;
 }

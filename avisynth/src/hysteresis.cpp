@@ -1,9 +1,9 @@
 /*
-  edge_detection.cpp
+  hysteresis.cpp
 
   This file is part of TCannyMod
 
-  Copyright (C) 2013 Oka Motofumi
+  Copyright (C) 2026 Oka Motofumi
 
   Authors: Oka Motofumi (chikuzen.mo at gmail dot com)
 
@@ -23,36 +23,29 @@
 */
 
 
-#include <algorithm>
 #include <vector>
-#include <cmath>
-#include <cfloat>
-#include <array>
-#include "tcannymod.h"
-
+#include "tcannymod.hpp"
 
 struct Pos {
-    int32_t x, y;
-    Pos(int32_t _x, int32_t _y) : x(_x), y(_y) {}
-    void search(const int width, const int height, float* edge, uint8_t* hyst,
-        const size_t epitch, const size_t hpitch, const float th,
+    int x, y;
+    Pos(int _x, int _y) : x(_x), y(_y) {}
+    template <typename Td>
+    void search(const int width, const int height, float* emaskp, Td* dstp,
+        const int epitch, const int dpitch, const float th, const Td maxv,
         std::vector<Pos>& stack)
     {
-        std::array<Pos, 8> coodinates{
-            Pos(x - 1, y - 1), Pos(x , y - 1), Pos(x + 1, y - 1), Pos(x - 1, y),
+        std::array<Pos, 8> coordinates{
+            Pos(x - 1, y - 1), Pos(x, y - 1), Pos(x + 1, y - 1), Pos(x - 1, y),
             Pos(x + 1, y), Pos(x - 1, y + 1), Pos(x, y + 1), Pos(x + 1, y + 1),
         };
-        for (const auto& p : coodinates) {
-            if (p.x < 0) continue;
-            else if (p.x == width) continue;
-            else if (p.y < 0) continue;
-            else if (p.y == height) continue;
+        for (const auto& p : coordinates) {
+            if (p.x < 0 || p.x >= width || p.y < 0 || p.y >= height)
+                continue;
             else {
-                auto posh = p.x + p.y * hpitch;
-                auto pose = p.x + p.y * epitch;
-                if (hyst[posh] == 0 && edge[pose] >= th) {
-                    edge[pose] = FLT_MAX;
-                    hyst[posh] = 0xFF;
+                auto posD = p.x + p.y * dpitch;
+                auto posE = p.x + p.y * epitch;
+                if (dstp[posD] == 0 && emaskp[posE] >= th) {
+                    dstp[posD] = maxv;
                     stack.emplace_back(p);
                 }
             }
@@ -61,32 +54,42 @@ struct Pos {
 };
 
 
-void __stdcall
-hysteresis(uint8_t* hmap, const size_t hpitch, float* emap,
-           const size_t epitch, const int width, const int height,
-           const float tmin, const float tmax) noexcept
+template <typename Td>
+static void hysteresis(void* dstp, const int dpitch, float* emaskp,
+    const int epitch, const int width, const int height, const float tmin,
+    const float tmax, const float maxval)
 {
-    memset(hmap, 0, hpitch * height);
+    Td* d = reinterpret_cast<Td*>(dstp);
+    const Td maxv = static_cast<Td>(maxval);
+
+    memset(d, 0, dpitch * height * sizeof(Td));
     std::vector<Pos> stack;
     stack.reserve(512);
 
-    for (int32_t y = 0; y < height; ++y) {
-        for (int32_t x = 0; x < width; ++x) {
-            auto posh = x + y * hpitch;
-            auto posb = x + y * epitch;
-            if (hmap[posh] != 0 || emap[posb] < tmax) {
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            auto posD = x + y * dpitch;
+            if (d[posD] > 0 || emaskp[x + y * epitch] < tmax) {
                 continue;
-            } else {
-                emap[posb] = FLT_MAX;
-                hmap[posh] = 0xFF;
-                stack.emplace_back(x, y);
             }
-            while (!stack.empty()) {
+            d[posD] = maxv;
+            stack.emplace_back(x, y);
+
+            do {
                 auto pos = stack.back();
                 stack.pop_back();
-                pos.search(width, height, emap, hmap, epitch, hpitch, tmin,
-                    stack);
-            }
+                pos.search<Td>(width, height, emaskp, d, epitch, dpitch, tmin,
+                    maxv, stack);
+            } while (!stack.empty());
         }
     }
 }
+
+
+hysteresis_t get_hysteresis(int bytes)
+{
+    if (bytes == 1) return hysteresis<uint8_t>;
+    if (bytes == 2) return hysteresis<uint16_t>;
+    return hysteresis<float>;
+}
+

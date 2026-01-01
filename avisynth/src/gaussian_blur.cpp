@@ -3,7 +3,7 @@
 
   This file is part of TCannyMod
 
-  Copyright (C) 2013 Oka Motofumi
+  Copyright (C) 2026 Oka Motofumi
 
   Authors: Oka Motofumi (chikuzen.mo at gmail dot com)
 
@@ -23,198 +23,171 @@
 */
 
 
-
-#include <cstdint>
+#include <type_traits>
 #include <algorithm>
 #include <unordered_map>
 #include <format>
-#include "tcannymod.h"
-#include "simd.h"
+
+#include "tcannymod.hpp"
+#include "gaussian_blur.hpp"
 
 
-template <typename Vf, bool USE_CACHE>
-static void __stdcall
-convert_to_float(const size_t width, const size_t height, const uint8_t* srcp,
-                 const int src_pitch, float* blurp, const size_t blur_pitch) noexcept
-{
-    constexpr size_t step = sizeof(Vf) / sizeof(float);
-
-    for (size_t y = 0; y < height; y++) {
-        for (size_t x = 0; x < width; x += step) {
-            Vf val = cvtu8_ps<Vf>(srcp + x);
-            if constexpr (USE_CACHE) {
-                store(blurp + x, val);
-            } else {
-                stream(blurp + x, val);
-            }
-        }
-        srcp += src_pitch;
-        blurp += blur_pitch;
-    }
-}
-
-template <typename Vf, bool USE_CACHE>
+template <typename Ts>
 static void
-horizontal_blur(const float* kernel, float* gbtp, const int radius,
-    const size_t width, float* blurp) noexcept
+convert_to_float(const void* srcp, int spitch, float*, int, void* dstp,
+    int dpitch, int width, int height, int, const float*, const float)
 {
-    constexpr size_t step = sizeof(Vf) / sizeof(float);
-    const int length = radius * 2 + 1;
+    const Ts* s = reinterpret_cast<const Ts*>(srcp);
+    float* d = reinterpret_cast<float*>(dstp);
 
-    for (int i = 1; i <= radius; ++i) {
-        gbtp[-i] = gbtp[i - 1];
-        gbtp[width - 1 + i] = gbtp[width - i];
-    }
-
-    for (size_t x = 0; x < width; x += step) {
-        Vf sum = zero<Vf>();
-        for (int i = -radius; i <= radius; ++i) {
-            Vf k = set1<Vf, float>(kernel[i + radius]);
-            Vf val = loadu<Vf>(gbtp + x + i);
-            sum = madd(k, val, sum);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            d[x] = s[x];
         }
-        if (USE_CACHE) {
-            store(blurp + x, sum);
-        } else {
-            stream(blurp + x, sum);
-        }
+        d += dpitch;
+        s += spitch;
     }
 }
 
 
-template <typename Vf, int RADIUS, bool USE_CACHE>
-static void __stdcall
-gaussian_blur(const int radius, const float* kernel, float* gbtp,
-    const size_t gbt_pitch, float* blurp, const size_t blur_pitch,
-    const uint8_t* srcp, const size_t src_pitch, const size_t width,
-    const size_t height)
+template <typename Td>
+static inline void
+hblur(float* srcp, Td* dstp, int width, int radius, const float* weights,
+    const float maxval)
 {
-    if constexpr (RADIUS == 0) {
-        convert_to_float<Vf, USE_CACHE>(
-                width, height, srcp, src_pitch, blurp, blur_pitch);
-        return;
-    } else {
+    constexpr float ro = 0.5f;
 
-        constexpr size_t align = sizeof(Vf);
-        constexpr size_t step = align / sizeof(float);
-        const int length = radius * 2 + 1;
-
-        const uint8_t* p[GB_MAX_LENGTH + 3];
-        p[radius] = srcp;
-        for (int r = 1; r <= radius; ++r) {
-            p[radius + r] = srcp + r * src_pitch;
-            p[radius - r] = p[radius + r - 1];
+    for (int x = 0; x < width; ++x) {
+        float sum = 0.0f;
+        for (int v = -radius; v <= radius; ++v) {
+            int xc = x + v;
+            if (xc < 0) {
+                xc = -xc;
+            } else if (xc >= width) {
+                xc = 2 * (width - 1) - xc;
+            }
+            sum += srcp[xc] * weights[v];
         }
-        p[length] = srcp + src_pitch * (radius + 1);
-        p[length + 1] = srcp + src_pitch * (radius + 2);
-        p[length + 2] = srcp + src_pitch * (radius + 3);
-
-        for (size_t y = 0; y < height; y += RADIUS + 2) {
-            for (size_t x = 0; x < width; x += step) {
-                Vf input = cvtu8_ps<Vf>(p[0] + x);
-                Vf k0 = set1<Vf, float>(kernel[0]);
-                Vf sum0 = mul(input, k0);
-
-                input = cvtu8_ps<Vf>(p[1] + x);
-                Vf k1 = set1<Vf, float>(kernel[1]);
-                sum0 = madd(input, k1, sum0);
-                Vf sum1 = mul(input, k0);
-
-                input = cvtu8_ps<Vf>(p[2] + x);
-                Vf k2 = set1<Vf, float>(kernel[2]);
-                sum0 = madd(input, k2, sum0);
-                sum1 = madd(input, k1, sum1);
-                Vf sum2 = mul(input, k0);
-
-                if constexpr (RADIUS == 1) {
-                    input = cvtu8_ps<Vf>(p[3] + x);
-                    sum1 = madd(input, k2, sum1);
-                    sum2 = madd(input, k1, sum2);
-                    input = cvtu8_ps<Vf>(p[4] + x);
-                    sum2 = madd(input, k2, sum2);
-                    store(gbtp + x, sum0);
-                    store(gbtp + x + gbt_pitch, sum1);
-                    store(gbtp + x + gbt_pitch * 2, sum2);
-
-                } else {
-                    input = cvtu8_ps<Vf>(p[3] + x);
-                    Vf k3 = set1<Vf, float>(kernel[3]);
-                    sum0 = madd(input, k3, sum0);
-                    sum1 = madd(input, k2, sum1);
-                    sum2 = madd(input, k1, sum2);
-                    Vf sum3 = mul(input, k0);
-
-                    for (int l = 4; l < length; ++l) {
-                        k0 = k1;
-                        k1 = k2;
-                        k2 = k3;
-                        k3 = set1<Vf, float>(kernel[l]);
-                        input = cvtu8_ps<Vf>(p[l] + x);
-                        sum0 = madd(input, k3, sum0);
-                        sum1 = madd(input, k2, sum1);
-                        sum2 = madd(input, k1, sum2);
-                        sum3 = madd(input, k0, sum3);
-                    }
-                    input = cvtu8_ps<Vf>(p[length] + x);
-                    sum1 = madd(input, k3, sum1);
-                    sum2 = madd(input, k2, sum2);
-                    sum3 = madd(input, k1, sum3);
-                    input = cvtu8_ps<Vf>(p[length + 1] + x);
-                    sum2 = madd(input, k3, sum2);
-                    sum3 = madd(input, k2, sum3);
-                    input = cvtu8_ps<Vf>(p[length + 2] + x);
-                    sum3 = madd(input, k3, sum3);
-                    store(gbtp + x, sum0);
-                    store(gbtp + x + gbt_pitch, sum1);
-                    store(gbtp + x + gbt_pitch * 2, sum2);
-                    store(gbtp + x + gbt_pitch * 3, sum3);
-                }
-            }
-            horizontal_blur<Vf, USE_CACHE>(kernel, gbtp, radius, width, blurp);
-            horizontal_blur<Vf, USE_CACHE>(kernel, gbtp + gbt_pitch, radius,
-                width, blurp + blur_pitch);
-            horizontal_blur<Vf, USE_CACHE>(kernel, gbtp + 2 * gbt_pitch, radius,
-                width, blurp + 2 * blur_pitch);
-            if (RADIUS > 1) {
-                horizontal_blur<Vf, USE_CACHE>(kernel, gbtp + 3 * gbt_pitch, radius,
-                    width, blurp + 3 * blur_pitch);
-            }
-            blurp += blur_pitch * (RADIUS + 2);
-            for (int i = 0; i < RADIUS + 2; ++i) {
-                for (int l = 0; l < length + 2; ++l) {
-                    p[l] = p[l + 1];
-                }
-                if (y < height - 2 - radius - i) {
-                    p[length + 2] += src_pitch;
-                } else if (y > height - 2 - radius - i) {
-                    p[length + 2] -= src_pitch;
-                }
-            }
+        if constexpr (!std::is_same_v<Td, float>) {
+            sum = std::clamp(sum + ro, 0.0f, maxval);
         }
+        dstp[x] = static_cast<Td>(sum);
     }
 }
 
 
-gaussian_blur_t get_gaussian_blur(int radius, bool use_cache, arch_t arch) noexcept
+template <typename Ts, typename Td>
+static void
+gblur(const void* srcp, int spitch, float* hbuffp, int hbpitch, void* dstp,
+    int dpitch, int width, int height, int radius, const float* weights,
+    const float maxval)
+{
+    const Ts* s = reinterpret_cast<const Ts*>(srcp);
+    Td* d = reinterpret_cast<Td*>(dstp);
+    weights += radius;
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float sum = 0.0f;
+            for (int v = -radius; v <= radius; ++v) {
+                int yc = y + v;
+                if (yc < 0) {
+                    yc = -yc;
+                } else if (yc >= height - 1) {
+                    yc = 2 * (height - 1) - yc;
+                }
+                sum += s[x + spitch * yc] * weights[v];
+            }
+            hbuffp[x] = sum;
+        }
+        hblur(hbuffp, d, width, radius, weights, maxval);
+        d += dpitch;
+    }
+}
+
+
+gblur_t get_gblur(int bytes, arch_t arch, int radius, int mode)
 {
     using std::format;
+    std::unordered_map<std::string, gblur_t> func;
 
-    int R = std::min(radius, 2);
-    int A = arch == HAS_SSE41 ? 0 : 1;
+    if (arch < USE_AVX512) radius = std::min(radius, 2);
+    if (arch == USE_AVX512) radius = std::min(radius, 3);
+    if (arch == NO_SIMD) radius = 1;
 
-    std::unordered_map<std::string, gaussian_blur_t> func;
-    func[format("{}{}{}", 0, false, 0)] = gaussian_blur<__m128, 0, false>;
-    func[format("{}{}{}", 1, false, 0)] = gaussian_blur<__m128, 1, false>;
-    func[format("{}{}{}", 2, false, 0)] = gaussian_blur<__m128, 2, false>;
-    func[format("{}{}{}", 0, true, 0)] = gaussian_blur<__m128, 0, true>;
-    func[format("{}{}{}", 1, true, 0)] = gaussian_blur<__m128, 1, true>;
-    func[format("{}{}{}", 2, true, 0)] = gaussian_blur<__m128, 2, true>;
-    func[format("{}{}{}", 0, false, 1)] = gaussian_blur<__m256, 0, false>;
-    func[format("{}{}{}", 1, false, 1)] = gaussian_blur<__m256, 1, false>;
-    func[format("{}{}{}", 2, false, 1)] = gaussian_blur<__m256, 2, false>;
-    func[format("{}{}{}", 0, true, 1)] = gaussian_blur<__m256, 0, true>;
-    func[format("{}{}{}", 1, true, 1)] = gaussian_blur<__m256, 1, true>;
-    func[format("{}{}{}", 2, true, 1)] = gaussian_blur<__m256, 2, true>;
+    if (mode & mode_t::DO_NOT_BLUR) {
+        func[format("{}{}", a2s(NO_SIMD), 1)] = convert_to_float<uint8_t>;
+        func[format("{}{}", a2s(NO_SIMD), 2)] = convert_to_float<uint16_t>;
+        func[format("{}{}", a2s(NO_SIMD), 4)] = convert_to_float<float>;
+        func[format("{}{}", a2s(USE_SSE4), 1)] = cvt2flt_sse4_u8;
+        func[format("{}{}", a2s(USE_SSE4), 2)] = cvt2flt_sse4_u16;
+        func[format("{}{}", a2s(USE_SSE4), 4)] = cvt2flt_sse4_flt;
+        func[format("{}{}", a2s(USE_AVX2), 1)] = cvt2flt_avx2_u8;
+        func[format("{}{}", a2s(USE_AVX2), 2)] = cvt2flt_avx2_u16;
+        func[format("{}{}", a2s(USE_AVX2), 4)] = cvt2flt_avx2_flt;
+        func[format("{}{}", a2s(USE_AVX512), 1)] = cvt2flt_avx512_u8;
+        func[format("{}{}", a2s(USE_AVX512), 2)] = cvt2flt_avx512_u16;
+        func[format("{}{}", a2s(USE_AVX512), 4)] = cvt2flt_avx512_flt;
 
-    return func[format("{}{}{}", R, use_cache, A)];
+        auto key = format("{}{}", a2s(arch), bytes);
+        return func.at(key);
+    }
+
+    if (mode & mode_t::DO_BLUR_ONLY) {
+        func[format("{}{}{}", a2s(NO_SIMD), 1, 1)] = gblur<uint8_t, uint8_t>;
+        func[format("{}{}{}", a2s(NO_SIMD), 2, 1)] = gblur<uint16_t, uint16_t>;
+        func[format("{}{}{}", a2s(NO_SIMD), 4, 1)] = gblur<float, float>;
+        func[format("{}{}{}", a2s(USE_SSE4), 1, 1)] = gblur_sse4_u8_r1_u8;
+        func[format("{}{}{}", a2s(USE_SSE4), 1, 2)] = gblur_sse4_u8_r2_u8;
+        func[format("{}{}{}", a2s(USE_SSE4), 2, 1)] = gblur_sse4_u16_r1_u16;
+        func[format("{}{}{}", a2s(USE_SSE4), 2, 2)] = gblur_sse4_u16_r2_u16;
+        func[format("{}{}{}", a2s(USE_SSE4), 4, 1)] = gblur_sse4_flt_r1_flt;
+        func[format("{}{}{}", a2s(USE_SSE4), 4, 2)] = gblur_sse4_flt_r2_flt;
+        func[format("{}{}{}", a2s(USE_AVX2), 1, 1)] = gblur_avx2_u8_r1_u8;
+        func[format("{}{}{}", a2s(USE_AVX2), 1, 2)] = gblur_avx2_u8_r2_u8;
+        func[format("{}{}{}", a2s(USE_AVX2), 2, 1)] = gblur_avx2_u16_r1_u16;
+        func[format("{}{}{}", a2s(USE_AVX2), 2, 2)] = gblur_avx2_u16_r2_u16;
+        func[format("{}{}{}", a2s(USE_AVX2), 4, 1)] = gblur_avx2_flt_r1_flt;
+        func[format("{}{}{}", a2s(USE_AVX2), 4, 2)] = gblur_avx2_flt_r2_flt;
+        func[format("{}{}{}", a2s(USE_AVX512), 1, 1)] = gblur_avx512_u8_r1_u8;
+        func[format("{}{}{}", a2s(USE_AVX512), 1, 2)] = gblur_avx512_u8_r2_u8;
+        func[format("{}{}{}", a2s(USE_AVX512), 1, 3)] = gblur_avx512_u8_r3_u8;
+        func[format("{}{}{}", a2s(USE_AVX512), 2, 1)] = gblur_avx512_u16_r1_u16;
+        func[format("{}{}{}", a2s(USE_AVX512), 2, 2)] = gblur_avx512_u16_r2_u16;
+        func[format("{}{}{}", a2s(USE_AVX512), 2, 3)] = gblur_avx512_u16_r3_u16;
+        func[format("{}{}{}", a2s(USE_AVX512), 4, 1)] = gblur_avx512_flt_r1_flt;
+        func[format("{}{}{}", a2s(USE_AVX512), 4, 2)] = gblur_avx512_flt_r2_flt;
+        func[format("{}{}{}", a2s(USE_AVX512), 4, 3)] = gblur_avx512_flt_r3_flt;
+
+        auto key = format("{}{}{}", a2s(arch), bytes, radius);
+        return func.at(key);
+    }
+
+    func[format("{}{}{}", a2s(NO_SIMD),  1, 1)] = gblur<uint8_t, float>;
+    func[format("{}{}{}", a2s(NO_SIMD),  2, 1)] = gblur<uint16_t, float>;
+    func[format("{}{}{}", a2s(NO_SIMD),  4, 1)] = gblur<float, float>;
+    func[format("{}{}{}", a2s(USE_SSE4), 1, 1)] = gblur_sse4_u8_r1_flt;
+    func[format("{}{}{}", a2s(USE_SSE4), 1, 2)] = gblur_sse4_u8_r2_flt;
+    func[format("{}{}{}", a2s(USE_SSE4), 2, 1)] = gblur_sse4_u16_r1_flt;
+    func[format("{}{}{}", a2s(USE_SSE4), 2, 2)] = gblur_sse4_u16_r2_flt;
+    func[format("{}{}{}", a2s(USE_SSE4), 4, 1)] = gblur_sse4_flt_r1_flt;
+    func[format("{}{}{}", a2s(USE_SSE4), 4, 2)] = gblur_sse4_flt_r2_flt;
+    func[format("{}{}{}", a2s(USE_AVX2), 1, 1)] = gblur_avx2_u8_r1_flt;
+    func[format("{}{}{}", a2s(USE_AVX2), 1, 2)] = gblur_avx2_u8_r2_flt;
+    func[format("{}{}{}", a2s(USE_AVX2), 2, 1)] = gblur_avx2_u16_r1_flt;
+    func[format("{}{}{}", a2s(USE_AVX2), 2, 2)] = gblur_avx2_u16_r2_flt;
+    func[format("{}{}{}", a2s(USE_AVX2), 4, 1)] = gblur_avx2_flt_r1_flt;
+    func[format("{}{}{}", a2s(USE_AVX2), 4, 2)] = gblur_avx2_flt_r2_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 1, 1)] = gblur_avx512_u8_r1_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 1, 2)] = gblur_avx512_u8_r2_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 1, 3)] = gblur_avx512_u8_r3_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 2, 1)] = gblur_avx512_u16_r1_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 2, 2)] = gblur_avx512_u16_r2_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 2, 3)] = gblur_avx512_u16_r3_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 4, 1)] = gblur_avx512_flt_r1_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 4, 2)] = gblur_avx512_flt_r2_flt;
+    func[format("{}{}{}", a2s(USE_AVX512), 4, 3)] = gblur_avx512_flt_r3_flt;
+
+    auto key = format("{}{}{}", a2s(arch), bytes, radius);
+    return func.at(key);
 }

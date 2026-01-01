@@ -1,9 +1,9 @@
 /*
-    cpu_check.cpp
+    utils.cpp
 
     This file is a part of TCannyMod.
 
-    Copyright (C) 2016 OKA Motofumi
+    Copyright (C) 2026 OKA Motofumi
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 #else
     #include <cpuid.h>
 #endif
-#include "cpu_check.h"
+#include "utils.hpp"
 
 
 enum : uint32_t {
@@ -192,8 +192,8 @@ bool has_sse41(uint32_t info) noexcept
 {
     if (info == 0) info = get_simd_support_info();
     auto requirement
-        = CPU_SSE2_SUPPORT | CPU_SSE3_SUPPORT
-        | CPU_SSSE3_SUPPORT | CPU_SSE4_1_SUPPORT;
+        = CPU_SSE2_SUPPORT | CPU_SSE3_SUPPORT | CPU_SSSE3_SUPPORT
+        | CPU_SSE4_1_SUPPORT;
     return (info & requirement) == requirement;
 }
 
@@ -219,9 +219,62 @@ bool has_avx512(uint32_t info) noexcept
     if (!has_avx2(info)) return false;
 
     auto requirements
-        = CPU_AVX512F_SUPPORT
-        | CPU_AVX512VL_SUPPORT
-        | CPU_AVX512BW_SUPPORT
-        | CPU_AVX512FP16_SUPPORT;
-    return (get_simd_support_info() & requirements) == requirements;
+        = CPU_AVX512F_SUPPORT | CPU_AVX512VL_SUPPORT | CPU_AVX512BW_SUPPORT;
+
+    return (info & requirements) == requirements;
 }
+
+bool has_avx512fp16(uint32_t info) noexcept
+{
+    if (info == 0) info = get_simd_support_info();
+    if (!has_avx512(info)) return false;
+
+    auto requirements = CPU_AVX512FP16_SUPPORT;
+
+    return (info & requirements) == requirements;
+}
+
+
+std::vector<std::string>
+split(const std::string& str, const char* separator) noexcept
+{
+    std::vector<std::string> dst;
+    size_t offset = 0;
+    std::string sep(separator);
+    size_t length = sep.length();
+    while (true) {
+        auto pos = str.find(sep, offset);
+        if (pos == std::string::npos) {
+            auto t = str.substr(offset);
+            if (t != "") {
+                dst.push_back(t);
+            }
+            break;
+        }
+        auto t = str.substr(offset, pos - offset);
+        if (t != "") {
+            dst.push_back(t);
+        }
+        offset = pos + length;
+    }
+    return dst;
+}
+
+uint32_t get_halfvalue(int bits)
+{
+    switch (bits) {
+    case 8:
+        return 0x80808080;
+    case 10:
+        return 0x02000200;
+    case 12:
+        return 0x08000800;
+    case 14:
+        return 0x20002000;
+    case 16:
+        return 0x80008000;
+    }
+    return 0x3F000000;  // 0.5f
+}
+
+
